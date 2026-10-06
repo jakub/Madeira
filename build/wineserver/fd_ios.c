@@ -1363,6 +1363,32 @@ void main_loop(void)
                 }
             }
 
+            /* Local diagnostic: the ml585 stuck-wait report above only runs in
+             * desktop mode. With MADEIRA_STUCK_WAIT_SECS set (and desktop mode
+             * off), run it on the same 10s cadence for any session. Reads the
+             * wait registry only; changes no scheduling. */
+            {
+                static int stuck_on = -1;
+                static struct timespec stuck_last;
+                if (stuck_on < 0)
+                {
+                    const char *d = getenv("MADEIRA_DESKTOP");
+                    const char *w = getenv("MADEIRA_STUCK_WAIT_SECS");
+                    stuck_on = !(d && *d == '1') && w && *w;
+                }
+                if (stuck_on)
+                {
+                    struct timespec now;
+                    clock_gettime(CLOCK_MONOTONIC, &now);
+                    if (now.tv_sec - stuck_last.tv_sec >= 10)
+                    {
+                        extern void ios_dump_stuck_waits(void);
+                        stuck_last = now;
+                        ios_dump_stuck_waits();
+                    }
+                }
+            }
+
             /* Check for injected client fd (socketpair bypass) */
             {
                 int injected = __atomic_exchange_n(&g_injected_client_fd, -1, __ATOMIC_SEQ_CST);
