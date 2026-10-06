@@ -87,7 +87,7 @@ import ObjectiveC
 // everywhere; MADEIRA_POINTER_LOCK=0 never locks the pointer;
 // MADEIRA_POINTER_AUTOLOCK=0 locks it only on request (Ctrl+Alt+P or the lock
 // button). Documents/madeira-input.json holds the settings: `sensMouse` (mouse
-// gain, default 1.0), `padRightStickMouse` (default false) and
+// gain over one screen point per delta unit, default 1.0), `padRightStickMouse` (default false) and
 // `ignoreTouchesWithMouse` (default true; false disables the AssistiveTouch
 // click filter). The driver side has MADEIRA_NAV_KEYS_E0. Log tag:
 // `[hwinput]`. See docs/KEYBOARD_MOUSE.md.
@@ -620,6 +620,18 @@ final class HardwareInput: ObservableObject {
     private let mouseQueue = DispatchQueue(label: "madeira.hwinput.mouse", qos: .userInteractive)
     private let motionLock = NSLock()
     private var carry = MotionCarry()
+    /// Guest pixels per screen point across the game surface. Relative deltas
+    /// are screen points; scaling them by this moves the program's cursor the
+    /// same distance on screen at any guest resolution (1048x720 and 2816x1940
+    /// alike), leaving `sensMouse` a pure preference. MetalBackedView publishes
+    /// it whenever it lays the surface out; guarded by motionLock.
+    private var pixelsPerPoint = 1.0
+
+    /// Main thread, from the display layout.
+    func setGuestPixelsPerPoint(_ value: Double) {
+        guard value.isFinite, value > 0 else { return }
+        motionLock.lock(); pixelsPerPoint = value; motionLock.unlock()
+    }
     private var wheel = WheelAccumulator()
     /// `currentRoute`, for the mouse queue.
     private var route: PointerRoute = .relative
@@ -1070,9 +1082,9 @@ final class HardwareInput: ObservableObject {
     /// and the same carry. Callable from either queue.
     private func postMotion(_ dx: Double, _ dy: Double) {
         // One aligned Double read of a value only the slider writes.
-        let gain = InputSettings.shared.sensMouse
+        let sens = InputSettings.shared.sensMouse
         motionLock.lock()
-        let d = carry.add(dx, dy, gain: gain)
+        let d = carry.add(dx, dy, gain: sens * pixelsPerPoint)
         motionLock.unlock()
         postRelative(d.dx, d.dy)
     }
@@ -1639,7 +1651,14 @@ enum PointerLock {
     static func refresh() {
         DispatchQueue.main.async {
             install()
-            keyWindow()?.rootViewController?.setNeedsUpdateOfPrefersPointerLocked()
+            // UIKit takes the preference from the topmost full-screen window's
+            // root, an overlay window during a game (OverlayHostingController),
+            // so every window's root is asked, not only the key window's.
+            UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap { $0.windows }
+                .compactMap { $0.rootViewController }
+                .forEach { $0.setNeedsUpdateOfPrefersPointerLocked() }
             // The preference is a request: iPadOS grants it only to a full-screen
             // scene and posts no notification when it declines. Report what the
             // scene actually did once UIKit has had a moment to apply it.

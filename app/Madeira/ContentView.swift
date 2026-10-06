@@ -215,6 +215,7 @@ final class MetalBackedView: UIView {
         // so Aspect / Fill / Stretch / Fit apply to desktop sessions as well.
         winios_set_desktop_rect(r.minX - bounds.minX, r.minY - bounds.minY, r.width, r.height, 1)
         let guest = guestSize(), mode = effectiveDisplayMode()
+        HardwareInput.shared.setGuestPixelsPerPoint(Double(guest.width / max(r.width, 1)))
         let line = String(format: "mode=%@ guest=%.0fx%.0f bounds=%.0fx%.0f -> rect=(%.0f,%.0f %.0fx%.0f)",
                           mode.rawValue, guest.width, guest.height, bounds.width, bounds.height,
                           r.minX, r.minY, r.width, r.height)
@@ -851,7 +852,7 @@ final class PassthroughWindow: UIWindow {
 }
 
 /// The status bar, home indicator and edge-gesture preferences of a game
-/// session. UIKit reads them from the root controller of the topmost
+/// session (and pointer lock, HardwareInput's). UIKit reads them from the root controller of the topmost
 /// full-screen window, which during a game is one of Madeira's overlay windows
 /// (joystick pad, touch controls, the text keyboard), not the app window whose
 /// sessionBody asks for them in SwiftUI. So those roots answer from here.
@@ -892,6 +893,7 @@ enum GameSessionChrome {
 /// the game session's system-chrome preferences (GameSessionChrome).
 final class OverlayHostingController<Content: View>: UIHostingController<Content> {
     override var prefersStatusBarHidden: Bool { GameSessionChrome.active }
+    override var prefersPointerLocked: Bool { HardwareInput.shared.pointerLocked }
     override var prefersHomeIndicatorAutoHidden: Bool { GameSessionChrome.active }
     override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { GameSessionChrome.active ? .all : [] }
 }
@@ -899,6 +901,7 @@ final class OverlayHostingController<Content: View>: UIHostingController<Content
 /// The same, for an overlay window without SwiftUI content.
 final class OverlayController: UIViewController {
     override var prefersStatusBarHidden: Bool { GameSessionChrome.active }
+    override var prefersPointerLocked: Bool { HardwareInput.shared.pointerLocked }
     override var prefersHomeIndicatorAutoHidden: Bool { GameSessionChrome.active }
     override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { GameSessionChrome.active ? .all : [] }
 }
