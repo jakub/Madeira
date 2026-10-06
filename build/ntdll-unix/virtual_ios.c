@@ -5358,6 +5358,11 @@ struct file_view
 #define VPROT_SYSTEM           0x0200  /* system view (underlying mmap not under our control) */
 #define VPROT_PLACEHOLDER      0x0400
 #define VPROT_FREE_PLACEHOLDER 0x0800
+#define VPROT_HEAP             0x1000  /* an executable heap's own reservation (see ios_guest_anon_rwx_view_ok) */
+
+/* Madeira-private NtAllocateVirtualMemoryEx attribute set by ntdll's heap.c on an
+ * executable heap's reservation. Not a Windows flag; must match heap.c. */
+#define MADEIRA_MEM_EXTENDED_PARAMETER_HEAP 0x40000000
 
 /* Conversion from VPROT_* to Win32 flags */
 static const BYTE VIRTUAL_Win32Flags[16] =
@@ -11958,6 +11963,11 @@ static int ios_guest_anon_rwx_view_ok( const struct file_view *view )
     if (view->protect & (SEC_IMAGE | VPROT_ARM64EC | VPROT_SYSTEM)) return 0;
     /* allocated RWX, not made executable after the fact: see above */
     if ((view->protect & (VPROT_WRITE | VPROT_EXEC)) != (VPROT_WRITE | VPROT_EXEC)) return 0;
+    /* An executable heap's reservation is heap memory whatever its size: ntdll's
+     * heap grows in 1 MB steps, the size the rule below reserves for code chunks,
+     * and its LFH bookkeeping (InterlockedAnd on group->free_bits) is an LL/SC
+     * loop that store emulation can never complete. Tagged by heap.c. */
+    if (view->protect & VPROT_HEAP) return 1;
     if (view->size < 0x10000) return 0;
     return (view->size & 0xffff) != 0;   /* data, not a code chunk: see above */
 }
@@ -20760,6 +20770,17 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
             if (status == STATUS_SUCCESS)
             {
                 base = view->base;
+                if (attributes & MADEIRA_MEM_EXTENDED_PARAMETER_HEAP)
+                {
+                    static int heap_tag_logs;
+                    view->protect |= VPROT_HEAP;
+                    if (heap_tag_logs < 16)
+                    {
+                        heap_tag_logs++;
+                        dprintf( 2, "[heap-rwx] executable heap reservation %p+0x%lx tagged as data\n",
+                                 base, (unsigned long)size );
+                    }
+                }
                 if (vprot & VPROT_EXEC || force_exec_prot) mprotect_range( base, size, 0, 0 );
                 ios_swap_init();
                 /* ml1077 commit-time backing (classic runs it unchanged); wide also backs a
