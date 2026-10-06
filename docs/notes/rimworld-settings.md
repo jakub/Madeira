@@ -16,38 +16,25 @@ Set these in the game's details page.
 
 ## 2. Wine prefix: an OS font named "Arial"
 
-RimWorld's main UI fonts are Unity dynamic fonts without embedded data. `Arial_small` and `Arial_medium` have `fontNames=Arial`, so they need an installed font whose family is "Arial". The prefix has only Tahoma.
+Madeira now handles this itself (`madeira_ensure_arial_fonts` in `WineProcessBridge.m`). This section explains why, and how to fix a prefix by hand.
 
-Wine's `FontSubstitutes` and `Replacements` map Arial to Tahoma, but Unity's own font lookup ignores those mappings. Without Arial, every glyph has a 2x2 bitmap and an advance of 0. Every label then measures 0 px wide, and the game draws no text at all.
+RimWorld's main UI fonts are Unity dynamic fonts without embedded data. `Arial_small` and `Arial_medium` have `fontNames=Arial`, so they need an installed font whose family is "Arial". The prefix has only Tahoma. Without Arial, every glyph has a 2x2 bitmap and an advance of 0. Every label then measures 0 px wide, and the game draws no text at all.
 
-**To fix it,** put a font with the family name "Arial" in `C:\windows\Fonts\arial.ttf` and register it:
+**How Unity looks up an OS font.** This was read from the disassembly of `UnityPlayer.dll` 2022.3 with its public PDB.
 
-1. Close Madeira. Wine rewrites the registry when it exits.
-2. Copy the font to `Documents/wine/drive_c/windows/Fonts/arial.ttf`.
-3. In `Documents/wine/system.reg`, add this line to each of these three keys:
+- `DynamicFontMap` scans `GetWindowsDirectory()\Fonts` once, and only that directory. It reads every `.ttf`, `.ttc`, `.otf` and `.dfont` file.
+- It keys each scalable face by **its FreeType family name**, matched exactly and case-sensitively, together with its bold and italic bits.
+- It ignores file names, the `...\CurrentVersion\Fonts` registry key, and Wine's `FontSubstitutes` and `Replacements`.
+- It skips files it cannot open, so 0-byte files do no harm.
 
-   ```
-   "Arial (TrueType)"="arial.ttf"
-   ```
+So the font's internal family name has to be "Arial". Copying Liberation Sans in as `arial.ttf` is not enough, because its family name stays "Liberation Sans". Registering it in the registry does not help either.
 
-   - `[Software\\Microsoft\\Windows NT\\CurrentVersion\\Fonts]`
-   - `[Software\\Wow6432Node\\Microsoft\\Windows NT\\CurrentVersion\\Fonts]`
-   - `[Software\\Microsoft\\Windows\\CurrentVersion\\Fonts]`
+**What Madeira ships.** Liberation Sans 2.1.5 (SIL OFL 1.1, metric-compatible with Arial), with the family renamed to "Arial" by `tools/fonts/make-arial.py`. This is also what Proton does. Madeira copies `arial.ttf`, `arialbd.ttf`, `ariali.ttf` and `arialbi.ttf` into `C:\windows\Fonts` whenever one of them is missing or empty, and never replaces an Arial that you installed. The bundle folder is called `arial-fonts` and not `fonts`, because Wine loads `<bundle>/fonts` as its own data-dir font folder.
 
-**Where to get the font.** The test used the Monotype Arial 5.10 that RimWorld itself contains. It is an embedded sfnt in `RimWorldWin64_Data/resources.assets` at offset `0x51834c` (778552 bytes, 24 tables). Because it belongs to the game, use it only in your own prefix and never redistribute it. This script extracts it:
+**Fixing a prefix by hand.** You need a font whose family name is "Arial" placed in `Documents/wine/drive_c/windows/Fonts/`. The file name and the registry do not matter. Either:
 
-```python
-import struct
-a = open("resources.assets", "rb").read(); off = 0x51834c
-n = struct.unpack(">H", a[off+4:off+6])[0]
-end = max(struct.unpack(">I", a[off+12+16*k+8:off+12+16*k+12])[0] +
-          struct.unpack(">I", a[off+12+16*k+12:off+12+16*k+16])[0] for k in range(n))
-open("arial.ttf", "wb").write(a[off:off+end])
-```
-
-The offset belongs to this RimWorld build. Check it by looking for `\x00\x01\x00\x00` followed by a table directory that contains `DSIG`, `JSTF` and `LTSH`, just after the "Arial" strings.
-
-A fix that Madeira could ship would register an open, metric-compatible font (Arimo or Liberation Sans) as `"Arial (TrueType)"`. That has not been tested yet: Unity may match on the font's internal family name rather than on the registry name.
+- run `make-arial.py` on the Liberation release, or
+- use the Monotype Arial 5.10 inside RimWorld's own `RimWorldWin64_Data/resources.assets`. It is an embedded sfnt at offset `0x51834c` in 1.6.4871 rev591 (778552 bytes; look for `\x00\x01\x00\x00` followed by a table directory with `DSIG`, `JSTF` and `LTSH`). It belongs to the game, so use it only in your own prefix.
 
 ## 3. RimWorld's own display preferences
 
@@ -67,14 +54,26 @@ Unity's own copies of these values are in `user.reg` under `[Software\\Ludeon St
 
 Close Madeira before you edit either file.
 
-## 4. Known issues
+## 4. Display mode list (madeira.cfg)
 
-- **Taps land a little too low.** Even at 1048x720 fullscreen, the touch target sits slightly below the tap. Clicks from a trackpad or mouse are accurate. Use **Settings → Pointer → Relative**, or a trackpad, as a workaround. The cause is under investigation (window geometry on the Wine side).
-- **The Options resolution list is empty.** Unity gets no usable display modes. `Player.log` shows `Failed to find a valid fullscreen resolution for exclusiveFullscreen …`. The virtual monitor lists standard 32 bpp modes, but the current Screen-shape size is not exposed as a mode that DXGI or Unity can use. Edit `Prefs.xml` instead, as described in section 3.
+By default, DXMT gives its DXGI output a synthetic `HMONITOR` (1) instead of user32's monitor handle. Unity's `WinScreenSetup::GetResolutions` compares `DXGI_OUTPUT_DESC.Monitor` with `MonitorFromWindow()`, finds no match, and gets an empty mode list. `Player.log` then shows `Failed to find a valid fullscreen resolution`, and Unity falls back to a decorated window, whose title bar shifts every tap.
+
+Add this line to `Documents/madeira.cfg`:
+
+```
+env.DXMT_WSI_MONITOR_IDENTITY = 1
+```
+
+With it, Unity gets the three virtual-monitor modes and starts borderless at 1048x720 (`[dxgi-modes] … count=3` in the log, and no fallback line).
+
+## 5. Known issues
+
+- **Taps land a few pixels low.** This is with `DXMT_WSI_MONITOR_IDENTITY=1` (section 4). Most taps hit; a few land a couple of pixels below the target. A probe shows the game side is exact. The window is `WS_POPUP`, its client rect is the 1048x720 window rect at (0,0), and Unity's mouse point is the Win32 cursor ±1 px. So the leftover offset is in how Madeira maps a touch onto the cursor, or how it draws the cursor sprite. Clicks from a trackpad or mouse are accurate.
+- **The Options resolution list is empty.** RimWorld lists only modes of at least 1024x768. The Screen-shape modes are 720 lines tall, so none qualify. Set the size in `Prefs.xml` instead (section 3).
 - **"BAD POOL — exiting now".** Now and then the JIT pool cannot be placed when Madeira starts (no address hole fits). It does not depend on the game. Relaunch Madeira.
 - **First start is slow.** Mono's call-site patching and DXMT shader compilation make the first start slow. Later starts are faster.
 
-## 5. Not needed
+## 6. Not needed
 
-- `madeira.cfg` keys: none are required. The diagnostic keys used during the investigation (`env.MADEIRA_STUCK_WAIT_SECS`, `metal-validation`, `env.FEX_*` experiments) are optional.
+- Other `madeira.cfg` keys: none are required beyond section 4. The diagnostic keys used during the investigation (`env.MADEIRA_STUCK_WAIT_SECS`, `metal-validation`, `env.FEX_*` experiments) are optional.
 - Mods: the `tools/textprobe` diagnostic mod is optional and changes nothing.
