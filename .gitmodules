@@ -1,15 +1,15 @@
 [submodule "FEX"]
 	path = FEX
-	url = https://github.com/willfaust/FEX.git
-	branch = ios-port-2607
+	url = https://github.com/jakub/FEX.git
+	branch = fix/unity-mono-rimworld
 [submodule "wine"]
 	path = wine
-	url = https://github.com/willfaust/wine.git
-	branch = madeira-lgpl
+	url = https://github.com/jakub/wine.git
+	branch = fix/unity-mono-rimworld
 [submodule "dxmt"]
 	path = dxmt
-	url = https://github.com/willfaust/dxmt.git
-	branch = ios-port
+	url = https://github.com/jakub/dxmt.git
+	branch = fix/unity-mono-rimworld
 [submodule "madeira-dock"]
 	path = madeira-dock
 	url = https://github.com/willfaust/madeira-dock.git
