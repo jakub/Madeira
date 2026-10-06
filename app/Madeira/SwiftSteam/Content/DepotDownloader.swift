@@ -165,63 +165,10 @@ final class DepotDownloader {
             throw SteamError.depotNotFound(app.appID)
         }
 
-        // 2. Prepare files and load journals off the main actor.
-        let prepared = try await Task.detached(priority: .userInitiated) {
-            try Self.prepare(plans: plans, installURL: installURL, journalDir: journalDir)
-        }.value
-        state.totalBytes = prepared.totalBytes
-        state.doneBytes = prepared.doneBytes
-        state.phase = .downloading
-        report(state)
-        SteamLog.event("[steam-depot] install begin app=\(app.appID) depots=\(plans.count) files=\(prepared.fileCount) resume=\(prepared.doneBytes > 0 ? 1 : 0)")
-
-        let remaining = prepared.remainingUncompressed
-        if remaining > 0 {
-            let values = try? installURL.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-            let available = UInt64(max(0, values?.volumeAvailableCapacityForImportantUsage ?? Int64.max))
-            if available < remaining { throw SteamError.insufficientDiskSpace(needed: remaining, available: available) }
-        }
-
-        // 3. Chunks.
+        // 2-3. Files, journals and chunks.
         let started = Date()
-        let resumedBytes = state.doneBytes
-        var lastReport = Date.distantPast
-        for (index, plan) in plans.enumerated() {
-            let journal = try JournalWriter(url: prepared.journals[index])
-            defer { journal.close() }
-            let work = prepared.pending[index]
-            let paths = prepared.paths[index]
-            let existing = prepared.existing[index]
-            let maximum = maxConcurrentChunks, attempts = attemptsPerChunk
-            try await withThrowingTaskGroup(of: (UInt64, UInt64).self) { group in
-                var next = 0
-                func enqueue() {
-                    guard next < work.count else { return }
-                    let item = work[next]; next += 1
-                    let chunk = plan.manifest.files[item.file].chunks[item.chunk]
-                    let path = paths[item.file]
-                    let verify = existing[item.file]
-                    group.addTask {
-                        if verify, Self.chunkAlreadyPresent(chunk, path: path) { return (item.key, UInt64(chunk.compressedSize)) }
-                        try await Self.fetchChunk(chunk, plan: plan, path: path, attempts: attempts, seed: item.file &+ item.chunk)
-                        return (item.key, UInt64(chunk.compressedSize))
-                    }
-                }
-                for _ in 0..<min(maximum, work.count) { enqueue() }
-                for try await (key, bytes) in group {
-                    journal.append(key)
-                    state.doneBytes += bytes
-                    let now = Date()
-                    if now.timeIntervalSince(lastReport) >= 0.25 {
-                        lastReport = now
-                        let elapsed = now.timeIntervalSince(started)
-                        if elapsed > 1 { state.bytesPerSecond = Double(state.doneBytes - resumedBytes) / elapsed }
-                        report(state)
-                    }
-                    enqueue()
-                }
-            }
-        }
+        let prepared = try await run(plans: plans, into: installURL, journalDir: journalDir, state: &state,
+                                     label: "install begin app=\(app.appID)", report: report)
 
         // 4. Install record. Sizes come from the manifests; no tree walk.
         state.phase = .finishing
@@ -272,6 +219,125 @@ final class DepotDownloader {
         try? FileManager.default.removeItem(at: journalDir)
         SteamLog.event("[steam-depot] install complete app=\(app.appID) bytes=\(prepared.totalUncompressed) seconds=\(Int(Date().timeIntervalSince(started)))")
         return installURL
+    }
+
+    /// The working folder of one Workshop item's download: `journal/` and the
+    /// `content/` it is staged in, apart from every game download's journal.
+    nonisolated static func workshopWorkFolder(itemID: UInt64, steamApps: URL) -> URL {
+        steamApps.appendingPathComponent("downloading/workshop/\(itemID)", isDirectory: true)
+    }
+
+    /// Downloads one Workshop item's content into its staging folder and
+    /// returns that folder; the caller moves it into place. The content is the
+    /// manifest `item.manifestID` in the app's Workshop depot, fetched like any
+    /// depot (key, request code, CDN auth, chunks); a legacy item without one is
+    /// the single file at its `fileURL`. Resumable: the staging folder and
+    /// journal persist until the caller removes the work folder.
+    func downloadWorkshopItem(_ item: WorkshopItem, app: SteamAppInfo, steamApps: URL,
+                              progress report: @escaping (SteamDownloadProgress) -> Void) async throws -> (folder: URL, bytes: UInt64) {
+        let work = Self.workshopWorkFolder(itemID: item.id, steamApps: steamApps)
+        let journalDir = work.appendingPathComponent("journal", isDirectory: true)
+        let content = work.appendingPathComponent("content", isDirectory: true)
+        try FileManager.default.createDirectory(at: journalDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: content, withIntermediateDirectories: true)
+        var state = SteamDownloadProgress()
+        report(state)
+
+        guard item.manifestID != 0 else {
+            guard !item.fileURL.isEmpty else { throw SteamError.chunkDownloadFailed("Workshop item \(item.id) has no content.") }
+            let data = try await Self.download(item.fileURL)
+            let leaf = URL(fileURLWithPath: item.filename.replacingOccurrences(of: "\\", with: "/")).lastPathComponent
+            let name = SteamInstallFiles.safeFolderName(leaf.isEmpty ? "\(item.id).bin" : leaf)
+            try data.write(to: content.appendingPathComponent(name), options: .atomic)
+            SteamLog.event("[steam-workshop] legacy item=\(item.id) bytes=\(data.count)")
+            return (content, UInt64(data.count))
+        }
+
+        depotCache = steamApps.appendingPathComponent("depotcache", isDirectory: true)
+        let hosts: [String]
+        if let provider = contentHosts { hosts = try await provider(app.appID) } else { hosts = try await contentServers(appID: app.appID) }
+        guard !hosts.isEmpty else { throw SteamError.chunkDownloadFailed("No content servers are available.") }
+        let depotID = app.workshopContentDepot
+        let key = try await depotKey(depotID: depotID, appID: app.appID)
+        let manifest = try await fetchManifest(depotID: depotID, appID: app.appID, manifestGID: item.manifestID,
+                                               key: key, hosts: hosts)
+        let pool = Array(hosts.prefix(hostPoolSize))
+        var auth: [String: String] = [:]
+        for host in pool { auth[host] = await cdnAuthFragment(depotID: depotID, appID: app.appID, host: host) }
+        let plan = DepotPlan(depotID: depotID, manifestGID: item.manifestID, key: key, manifest: manifest,
+                             hosts: pool, auth: auth, declaredSize: item.fileSize, health: ContentHostHealth(),
+                             dlcAppID: nil)
+        let prepared = try await run(plans: [plan], into: content, journalDir: journalDir, state: &state,
+                                     label: "workshop begin item=\(item.id) app=\(app.appID) depot=\(depotID)", report: report)
+        return (content, prepared.totalUncompressed)
+    }
+
+    // MARK: - Run
+
+    /// Steps 2 and 3 of a download: size the files and load the journals off
+    /// the main actor, check the disk, then fetch every pending chunk into
+    /// `installURL`, journaling each so an interrupted download resumes.
+    private func run(plans: [DepotPlan], into installURL: URL, journalDir: URL,
+                     state: inout SteamDownloadProgress, label: String,
+                     report: @escaping (SteamDownloadProgress) -> Void) async throws -> Prepared {
+        let prepared = try await Task.detached(priority: .userInitiated) {
+            try Self.prepare(plans: plans, installURL: installURL, journalDir: journalDir)
+        }.value
+        state.totalBytes = prepared.totalBytes
+        state.doneBytes = prepared.doneBytes
+        state.phase = .downloading
+        report(state)
+        SteamLog.event("[steam-depot] \(label) depots=\(plans.count) files=\(prepared.fileCount) resume=\(prepared.doneBytes > 0 ? 1 : 0)")
+
+        let remaining = prepared.remainingUncompressed
+        if remaining > 0 {
+            let values = try? installURL.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+            let available = UInt64(max(0, values?.volumeAvailableCapacityForImportantUsage ?? Int64.max))
+            if available < remaining { throw SteamError.insufficientDiskSpace(needed: remaining, available: available) }
+        }
+
+        // Chunks.
+        let started = Date()
+        let resumedBytes = state.doneBytes
+        var lastReport = Date.distantPast
+        for (index, plan) in plans.enumerated() {
+            let journal = try JournalWriter(url: prepared.journals[index])
+            defer { journal.close() }
+            let work = prepared.pending[index]
+            let paths = prepared.paths[index]
+            let existing = prepared.existing[index]
+            let maximum = maxConcurrentChunks, attempts = attemptsPerChunk
+            try await withThrowingTaskGroup(of: (UInt64, UInt64).self) { group in
+                var next = 0
+                func enqueue() {
+                    guard next < work.count else { return }
+                    let item = work[next]; next += 1
+                    let chunk = plan.manifest.files[item.file].chunks[item.chunk]
+                    let path = paths[item.file]
+                    let verify = existing[item.file]
+                    group.addTask {
+                        if verify, Self.chunkAlreadyPresent(chunk, path: path) { return (item.key, UInt64(chunk.compressedSize)) }
+                        try await Self.fetchChunk(chunk, plan: plan, path: path, attempts: attempts, seed: item.file &+ item.chunk)
+                        return (item.key, UInt64(chunk.compressedSize))
+                    }
+                }
+                for _ in 0..<min(maximum, work.count) { enqueue() }
+                for try await (key, bytes) in group {
+                    journal.append(key)
+                    state.doneBytes += bytes
+                    let now = Date()
+                    if now.timeIntervalSince(lastReport) >= 0.25 {
+                        lastReport = now
+                        let elapsed = now.timeIntervalSince(started)
+                        if elapsed > 1 { state.bytesPerSecond = Double(state.doneBytes - resumedBytes) / elapsed }
+                        report(state)
+                    }
+                    enqueue()
+                }
+            }
+        }
+
+        return prepared
     }
 
     /// Whether a previous attempt left resumable progress for this app.
