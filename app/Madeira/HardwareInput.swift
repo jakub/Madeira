@@ -348,11 +348,10 @@ enum StickVelocity {
 }
 
 
-/// Where a point on the game view lands on the Windows screen. The screen is
-/// drawn aspect-fit and centred in the view: MetalBackedView.gameRect for a
-/// program on the game view (its touch mapping, mapTouch, is the same
-/// arithmetic) and the desktop compositor (Winios.m) for the desktop
-/// session. A point in the letterbox clamps to the nearest edge.
+/// Where a point on the game view lands on the desktop session's Windows
+/// screen, which the desktop compositor (Winios.m) draws aspect-fit and
+/// centred in the view. A point in the letterbox clamps to the nearest edge.
+/// A program on the game view maps through MetalBackedView.gamePoint instead.
 enum ScreenMap {
     static func fit(viewW: Double, viewH: Double, screenW: Int, screenH: Int)
         -> (originX: Double, originY: Double, scale: Double) {
@@ -1121,11 +1120,18 @@ final class HardwareInput: ObservableObject {
     /// the game view. Main thread.
     private func postAbsolute(_ p: CGPoint, in view: UIView) {
         let desktop = Self.desktopMode
-        let desk = Self.desktopSize()
-        let sw = desktop ? desk.w : DirectCursorOverlay.screenW
-        let sh = desktop ? desk.h : DirectCursorOverlay.screenH
-        let s = ScreenMap.toScreen(x: Double(p.x), y: Double(p.y), viewW: Double(view.bounds.width),
-                                   viewH: Double(view.bounds.height), screenW: sw, screenH: sh)
+        let s: (x: Int32, y: Int32)
+        if desktop {
+            let desk = Self.desktopSize()
+            s = ScreenMap.toScreen(x: Double(p.x), y: Double(p.y), viewW: Double(view.bounds.width),
+                                   viewH: Double(view.bounds.height), screenW: desk.w, screenH: desk.h)
+        } else {
+            // The game surface: the live guest size and the session's Aspect &
+            // scaling choice, exactly as a touch maps (MetalBackedView.gamePoint).
+            guard let game = view as? MetalBackedView else { return }
+            let g = game.gamePoint(p)
+            s = (g.0, g.1)
+        }
         setMouseInUse(true)
         if let last = lastAbsolute, last.x == s.x, last.y == s.y { return }
         lastAbsolute = s
@@ -1842,11 +1848,10 @@ final class PointerFallback: NSObject {
 /// it moves and scales with it; created the first time a mouse is used there.
 /// The image and hotspot are the program's (driver_ios.c extracts them exactly
 /// as for the desktop compositor); positions are Wine screen pixels on the
-/// 1024x768 surface that MetalBackedView.mapTouch also maps to. Main thread.
+/// guest surface (winios_screen_size), which MetalHostView's frame covers
+/// exactly, so one guest pixel is bounds/guest points on each axis. Main thread.
 final class DirectCursorOverlay {
     static let shared = DirectCursorOverlay()
-    static let screenW = 1024
-    static let screenH = 768
 
     private var layer: CALayer?
     private var image = winios_direct_cursor_state()
@@ -1882,13 +1887,17 @@ final class DirectCursorOverlay {
         CATransaction.setDisableActions(true)
         l.isHidden = !visible
         if visible {
-            let k = MetalHostView.shared.bounds.width / CGFloat(Self.screenW)
+            var gw: Int32 = 0, gh: Int32 = 0
+            winios_screen_size(&gw, &gh)
+            let host = MetalHostView.shared.bounds
+            let kx = host.width / CGFloat(max(gw, 1))
+            let ky = host.height / CGFloat(max(gh, 1))
             let w = serial != 0 ? Int(image.w) : Self.arrowSize.w
             let h = serial != 0 ? Int(image.h) : Self.arrowSize.h
             let hx = serial != 0 ? Int(image.hot_x) : 0
             let hy = serial != 0 ? Int(image.hot_y) : 0
-            l.bounds = CGRect(x: 0, y: 0, width: CGFloat(w) * k, height: CGFloat(h) * k)
-            l.position = CGPoint(x: CGFloat(Int(x) - hx) * k, y: CGFloat(Int(y) - hy) * k)
+            l.bounds = CGRect(x: 0, y: 0, width: CGFloat(w) * kx, height: CGFloat(h) * ky)
+            l.position = CGPoint(x: CGFloat(Int(x) - hx) * kx, y: CGFloat(Int(y) - hy) * ky)
         }
         CATransaction.commit()
     }

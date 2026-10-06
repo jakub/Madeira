@@ -315,6 +315,14 @@ final class MetalBackedView: UIView {
             Self.cursor = CGPoint(x: CGFloat(px), y: CGFloat(py))   // keep the trackpad cursor in step
             return (px, py)
         }
+        return gamePoint(p)
+    }
+
+    /// A point on this view (view-local points) as the guest pixel it covers
+    /// on the game surface, through the GameSurfaceLayout math that sizes the
+    /// presented layer. Direct (non-desktop) sessions; the absolute pointer
+    /// route uses it too, so touch and trackpad land on the same pixel.
+    func gamePoint(_ p: CGPoint) -> (Int32, Int32) {
         let g = GameSurfaceLayout.map(point: p, guest: guestSize(), aspect: drawableAspect(),
                                       bounds: bounds, mode: effectiveDisplayMode())
         return (Int32(g.x), Int32(g.y))
