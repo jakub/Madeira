@@ -843,7 +843,7 @@ func packageBuffer(apps: [UInt32], depots: [UInt32]) -> Data {
         try SteamWorkshop.parseDetails(wsResponse(batch.filter { $0 != 200 }.compactMap { wsWorld[$0] }))
     }
     require(wsNoNested.incomplete && !wsNoNested.mods.contains { $0.id == 10 }, "a nested collection Steam does not answer makes the answer incomplete")
-    require(wsResolved.incomplete, "an unreadable listed item also marks the answer incomplete")
+    require(!wsResolved.incomplete && wsResolved.unavailable.contains(5), "an item Steam reports gone for good (result 9) does not make the answer incomplete")
     do { _ = try await SteamWorkshop.resolve(collection: 6, appID: 294100) { batch in try SteamWorkshop.parseDetails(wsResponse(batch.compactMap { wsWorld[$0] })) }; require(false, "a root that is not a collection or mod is refused") }
     catch let e as WorkshopError { if case .unsuitable = e { require(true, "a root that is not a collection or mod is refused") } else { require(false, "a root that is not a collection or mod is refused") } }
 
@@ -905,6 +905,21 @@ func packageBuffer(apps: [UInt32], depots: [UInt32]) -> Data {
     require(WorkshopInstall.plan(wsProv, record: wsRec, installFolder: "rimworld", folderExists: wsExists).conflicts.isEmpty, "a game folder whose name changed case is still Madeira's")
     try wsFM.removeItem(at: wsMods.appendingPathComponent("Harmony"))
     require(WorkshopInstall.secondCopies(wsRec, steamApps: wsApps).isEmpty, "the second-copy warning clears once that copy is deleted")
+    var wsGone = wsProv; wsGone.unavailable = [3]; wsGone.mods = [wsItem(1, 12)]; wsGone.listed = [1, 3]
+    wsRec.items["8"] = WorkshopRecord.Entry(title: "needed by 3", manifest: "80", timeUpdated: 0, folder: "common/RimWorld/Mods/8", requiredBy: 3, bytes: 0)
+    let wsPlan6 = WorkshopInstall.plan(wsGone, record: wsRec, installFolder: "RimWorld", folderExists: wsExists)
+    require(!wsPlan6.remove.contains("8") && !wsPlan6.removalsDeferred, "what an unavailable mod required is kept, without deferring other removals")
+    try wsFM.createDirectory(at: wsApps.appendingPathComponent("common/RIMWORLD/Mods/6"), withIntermediateDirectories: true)
+    try wsFM.createDirectory(at: wsMods.appendingPathComponent("6"), withIntermediateDirectories: true)
+    var wsCase = WorkshopRecord(appID: 294100)
+    wsCase.items["6"] = WorkshopRecord.Entry(title: "six", manifest: "60", timeUpdated: 0, folder: "common/RIMWORLD/Mods/6", requiredBy: nil, bytes: 0)
+    var wsNone = wsDrop; wsNone.mods = []; wsNone.listed = []
+    _ = try await WorkshopInstall.apply(WorkshopInstall.plan(wsNone, record: wsCase, installFolder: "RimWorld", folderExists: wsExists), resolution: wsNone, record: &wsCase, installFolder: "RimWorld", steamApps: wsApps, download: wsDownload) { _, _, _ in }
+    // On a case-sensitive file system the record's spelling is another folder, which must survive.
+    let wsCaseSensitive = !wsFM.fileExists(atPath: wsApps.appendingPathComponent("COMMON").path)
+    require(!wsFM.fileExists(atPath: wsMods.appendingPathComponent("6").path)
+            && (!wsCaseSensitive || wsFM.fileExists(atPath: wsApps.appendingPathComponent("common/RIMWORLD/Mods/6").path)),
+            "removal deletes the item's own place, not the record's spelling of it")
     try? wsFM.removeItem(at: wsRoot)
     let legacy = SteamAppInfo.parse(appID: 10, from: appVDF(#"""
     "common" { "name" "Old" "type" "Game" "oslist" "windows" } "config" { "installdir" "Old" }

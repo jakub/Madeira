@@ -82,7 +82,9 @@ enum SteamInstallFiles {
         let workshop = WorkshopRecord.load(appID: UInt32(appID), steamApps: steamApps)
         for (id, entry) in workshop.items
         where WorkshopInstall.isExpected(entry, itemID: id, appID: workshop.appID, installFolder: safeFolderName(folderName)) {
-            try? fm.removeItem(at: steamApps.appendingPathComponent(entry.folder, isDirectory: true))
+            guard let itemID = UInt64(id) else { continue }
+            let own = WorkshopInstall.folder(itemID: itemID, appID: workshop.appID, installFolder: safeFolderName(folderName))
+            try? fm.removeItem(at: steamApps.appendingPathComponent(own, isDirectory: true))
             try? fm.removeItem(at: steamApps.appendingPathComponent("downloading/workshop/\(id)", isDirectory: true))
         }
         try? fm.removeItem(at: WorkshopRecord.url(appID: UInt32(appID), steamApps: steamApps))

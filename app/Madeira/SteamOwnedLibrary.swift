@@ -1228,7 +1228,9 @@ final class SteamOwnedLibrary: ObservableObject {
             let plan = WorkshopInstall.plan(resolution, record: record, installFolder: installFolder) {
                 FileManager.default.fileExists(atPath: steamApps.appendingPathComponent($0).path)
             }
-            let syncing = downloads[appID] != nil
+            let syncing = active?.id == appID
+            // Reading every mod's About.xml is file work: off the main actor.
+            let copies = await Task.detached(priority: .utility) { WorkshopInstall.secondCopies(record, steamApps: steamApps) }.value
             update { status in
                 status.collectionTitle = resolution.collection.title
                 status.items = resolution.mods.count
@@ -1236,7 +1238,7 @@ final class SteamOwnedLibrary: ObservableObject {
                 status.skipped = Self.describeSkipped(resolution)
                 status.warnings = plan.conflicts.map { WorkshopInstall.conflictWarning($0, appID: UInt32(appID), installFolder: installFolder) }
                     + (plan.removalsDeferred ? ["Steam did not answer for every item in the collection, so nothing will be removed until it does"] : [])
-                    + WorkshopInstall.secondCopies(record, steamApps: steamApps)
+                    + copies
                 status.error = nil
             }
             SteamLog.event("[steam-workshop] check app=\(appID) mods=\(resolution.mods.count) pending=\(plan.install.count + plan.remove.count) conflicts=\(plan.conflicts.count) skipped=\(resolution.skipped.count) deferred=\(plan.removalsDeferred ? 1 : 0)")

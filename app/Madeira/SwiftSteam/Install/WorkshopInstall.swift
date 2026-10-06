@@ -81,7 +81,11 @@ enum WorkshopInstall {
     static func plan(_ resolution: SteamWorkshop.Resolution, record: WorkshopRecord, installFolder: String,
                      folderExists: (String) -> Bool) -> Plan {
         var plan = Plan()
-        let wanted = Set(resolution.listed.map(String.init)).union(resolution.mods.map { String($0.id) })
+        var wanted = Set(resolution.listed.map(String.init)).union(resolution.mods.map { String($0.id) })
+        // What an unavailable mod required is unknown: keep what it required before.
+        for (id, entry) in record.items where entry.requiredBy.map(resolution.unavailable.contains) == true {
+            wanted.insert(id)
+        }
         for item in resolution.mods {
             let id = String(item.id)
             let relative = folder(itemID: item.id, appID: record.appID, installFolder: installFolder)
@@ -224,6 +228,11 @@ enum WorkshopInstall {
             }
             do {
                 let staged = try await download(item)
+                // A folder may have appeared there while the item downloaded.
+                if fm.fileExists(atPath: destination.path), !ours {
+                    result.warnings.append(conflictWarning(item, appID: record.appID, installFolder: installFolder))
+                    continue
+                }
                 let work = staged.folder.deletingLastPathComponent()
                 // The content is complete: its journal must not outlive it, or a
                 // later download would trust chunks that are no longer on disk.
@@ -266,8 +275,10 @@ enum WorkshopInstall {
             guard let entry = record.items[id] else { continue }
             progress(done, total, entry.title)
             done += 1
-            if isExpected(entry, itemID: id, appID: record.appID, installFolder: installFolder) {
-                try? fm.removeItem(at: steamApps.appendingPathComponent(entry.folder, isDirectory: true))
+            // The item's own place is deleted, never the record's spelling of it.
+            if isExpected(entry, itemID: id, appID: record.appID, installFolder: installFolder), let itemID = UInt64(id) {
+                let own = folder(itemID: itemID, appID: record.appID, installFolder: installFolder)
+                try? fm.removeItem(at: steamApps.appendingPathComponent(own, isDirectory: true))
             }
             try? fm.removeItem(at: steamApps.appendingPathComponent("downloading/workshop/\(id)", isDirectory: true))
             record.items[id] = nil

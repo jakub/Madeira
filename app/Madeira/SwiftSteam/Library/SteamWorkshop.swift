@@ -165,10 +165,18 @@ enum SteamWorkshop {
         /// included: a recorded mod that is listed but momentarily skipped
         /// (unreadable, made private, banned) is kept, not removed.
         var listed: Set<UInt64> = []
-        /// Steam did not answer for some item (unreadable, private, not
-        /// returned): what hangs below it is unknown, so nothing is removed.
+        /// Steam did not answer for some item (not returned, or a transient
+        /// error): what hangs below it is unknown, so nothing is removed.
         var incomplete = false
+        /// Items Steam answered for as gone for good (deleted, private). A
+        /// mod's required items are unknown then, so recorded items it
+        /// required are kept.
+        var unavailable: Set<UInt64> = []
     }
+
+    /// EResults that say "try again" rather than "this item is gone": Fail,
+    /// Busy, Timeout, ServiceUnavailable, and 0 for an ID Steam did not return.
+    static let transientResults: Set<UInt32> = [0, 2, 10, 16, 20]
 
     /// Walks a collection: nested collections are expanded, each mod's required
     /// items are followed (transitively), and anything for another app, banned,
@@ -211,8 +219,9 @@ enum SteamWorkshop {
                 guard visited.insert(entry.id).inserted else { continue }
                 resolution.listed.insert(entry.id)
                 guard let item = known[entry.id], item.result == 1 else {
-                    resolution.skipped[entry.id] = "not available (result \(known[entry.id]?.result ?? 0))"
-                    resolution.incomplete = true
+                    let result = known[entry.id]?.result ?? 0
+                    resolution.skipped[entry.id] = "not available (result \(result))"
+                    if transientResults.contains(result) { resolution.incomplete = true } else { resolution.unavailable.insert(entry.id) }
                     continue
                 }
                 if item.banned { resolution.skipped[item.id] = "banned"; continue }
