@@ -1412,6 +1412,12 @@ struct ContentView: View {
         .ignoresSafeArea()
         .background(Color.black)
         .statusBarHidden(true)
+        // An edge swipe reaches the game first; a second one opens the Dock,
+        // Control Center or notifications. The home indicator fades while the
+        // game is touched. iPadOS honours both, like the hidden status bar,
+        // only while the app runs full screen.
+        .defersSystemGestures(on: .all)
+        .persistentSystemOverlays(.hidden)
     }
 
     /// Portrait: classic tooling layout — header, badges, 240pt game strip,
@@ -3937,7 +3943,11 @@ enum TouchControlsHost {
             w.windowLevel = .normal + 101
             w.backgroundColor = .clear
             w.isHidden = false        // deliberately never made key
-            let host = UIHostingController(rootView: TouchControlsOverlay())
+            // The same system-gesture preferences as sessionBody: UIKit may ask
+            // this topmost window's controller instead of the app window's.
+            let host = UIHostingController(rootView: TouchControlsOverlay()
+                .defersSystemGestures(on: .all)
+                .persistentSystemOverlays(.hidden))
             host.view.backgroundColor = .clear
             w.rootViewController = host
             window = w

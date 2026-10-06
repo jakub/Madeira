@@ -1640,7 +1640,21 @@ enum PointerLock {
         DispatchQueue.main.async {
             install()
             keyWindow()?.rootViewController?.setNeedsUpdateOfPrefersPointerLocked()
+            // The preference is a request: iPadOS grants it only to a full-screen
+            // scene and posts no notification when it declines. Report what the
+            // scene actually did once UIKit has had a moment to apply it.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { logGrant(why: "requested") }
         }
+    }
+
+    private static var grantObserver: NSObjectProtocol?
+
+    /// "[hwinput] pointer lock granted=..." from the scene's own lock state, next
+    /// to what Madeira asked for, on each request and each change UIKit reports.
+    private static func logGrant(why: String) {
+        let scene = keyWindow()?.windowScene
+        let granted = scene?.pointerLockState.map { $0.isLocked ? "yes" : "no" } ?? "n/a"
+        fputs("[hwinput] pointer lock granted=\(granted) requested=\(HardwareInput.shared.pointerLocked ? "yes" : "no") (\(why))\n", stderr)
     }
 
     private static func keyWindow() -> UIWindow? {
@@ -1669,6 +1683,10 @@ enum PointerLock {
         }
         installed = true
         fputs("[hwinput] pointer lock installed on \(NSStringFromClass(cls))\n", stderr)
+        grantObserver = NotificationCenter.default.addObserver(
+            forName: UIPointerLockState.didChangeNotification, object: nil, queue: .main) { _ in
+            logGrant(why: "changed")
+        }
     }
 }
 
