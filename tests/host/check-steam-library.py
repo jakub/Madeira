@@ -87,7 +87,7 @@ library_swift = [
     'SwiftSteam/Core/SteamSession.swift', 'SwiftSteam/Content/ContentDecryptor.swift', 'SwiftSteam/Content/DepotDownloader.swift',
     'SwiftSteam/Content/DepotManifest.swift', 'SwiftSteam/Library/SteamAppInfo.swift',
     'SwiftSteam/Library/SteamLibraryFetcher.swift', 'SwiftSteam/Library/SteamWorkshop.swift',
-    'SwiftSteam/Install/AppManifestWriter.swift']
+    'SwiftSteam/Install/AppManifestWriter.swift', 'SwiftSteam/Install/WorkshopInstall.swift']
 c_files = ['SwiftSteam/chunk_zip.c', 'SwiftSteam/chunk_zip.h', 'SwiftSteam/lzma_shim.c', 'SwiftSteam/lzma_shim.h',
            'SwiftSteam/zstd_edu.c', 'SwiftSteam/zstd_edu.h']
 project = (root / 'app/Madeira.xcodeproj/project.pbxproj').read_text()
@@ -1096,7 +1096,8 @@ try:
                   steam / 'Content/ContentDecryptor.swift', steam / 'Content/DepotManifest.swift',
                   steam / 'Library/SteamAppInfo.swift', steam / 'Library/SteamLibraryFetcher.swift',
                   steam / 'Library/SteamWorkshop.swift',
-                  steam / 'Install/AppManifestWriter.swift', app / 'SteamInstall.swift', app / 'SteamKeyValues.swift']
+                  steam / 'Install/AppManifestWriter.swift', steam / 'Install/WorkshopInstall.swift',
+                  app / 'SteamInstall.swift', app / 'SteamKeyValues.swift']
     exe = work / 'check'
     build = subprocess.run([SWIFTC, '-parse-as-library', '-swift-version', '5', '-sanitize=address', '-g', '-o', str(exe),
                             '-I', str(shim / 'CommonCrypto'), '-I', str(shim / 'Compression'), '-I', str(shim / 'zlib'),

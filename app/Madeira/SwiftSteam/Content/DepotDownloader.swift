@@ -167,8 +167,9 @@ final class DepotDownloader {
 
         // 2-3. Files, journals and chunks.
         let started = Date()
-        let prepared = try await run(plans: plans, into: installURL, journalDir: journalDir, state: &state,
-                                     label: "install begin app=\(app.appID)", report: report)
+        let prepared = try await run(plans: plans, into: installURL, journalDir: journalDir, state: &state, began: { prepared in
+            SteamLog.event("[steam-depot] install begin app=\(app.appID) depots=\(plans.count) files=\(prepared.fileCount) resume=\(prepared.doneBytes > 0 ? 1 : 0)")
+        }, report: report)
 
         // 4. Install record. Sizes come from the manifests; no tree walk.
         state.phase = .finishing
@@ -267,8 +268,9 @@ final class DepotDownloader {
         let plan = DepotPlan(depotID: depotID, manifestGID: item.manifestID, key: key, manifest: manifest,
                              hosts: pool, auth: auth, declaredSize: item.fileSize, health: ContentHostHealth(),
                              dlcAppID: nil)
-        let prepared = try await run(plans: [plan], into: content, journalDir: journalDir, state: &state,
-                                     label: "workshop begin item=\(item.id) app=\(app.appID) depot=\(depotID)", report: report)
+        let prepared = try await run(plans: [plan], into: content, journalDir: journalDir, state: &state, began: { prepared in
+            SteamLog.event("[steam-workshop] download begin item=\(item.id) app=\(app.appID) depot=\(depotID) files=\(prepared.fileCount) resume=\(prepared.doneBytes > 0 ? 1 : 0)")
+        }, report: report)
         return (content, prepared.totalUncompressed)
     }
 
@@ -278,7 +280,7 @@ final class DepotDownloader {
     /// the main actor, check the disk, then fetch every pending chunk into
     /// `installURL`, journaling each so an interrupted download resumes.
     private func run(plans: [DepotPlan], into installURL: URL, journalDir: URL,
-                     state: inout SteamDownloadProgress, label: String,
+                     state: inout SteamDownloadProgress, began: (Prepared) -> Void,
                      report: @escaping (SteamDownloadProgress) -> Void) async throws -> Prepared {
         let prepared = try await Task.detached(priority: .userInitiated) {
             try Self.prepare(plans: plans, installURL: installURL, journalDir: journalDir)
@@ -287,7 +289,7 @@ final class DepotDownloader {
         state.doneBytes = prepared.doneBytes
         state.phase = .downloading
         report(state)
-        SteamLog.event("[steam-depot] \(label) depots=\(plans.count) files=\(prepared.fileCount) resume=\(prepared.doneBytes > 0 ? 1 : 0)")
+        began(prepared)
 
         let remaining = prepared.remainingUncompressed
         if remaining > 0 {
