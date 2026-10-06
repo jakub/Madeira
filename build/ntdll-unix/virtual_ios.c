@@ -8398,6 +8398,34 @@ static ULONG_PTR ios_wow_extend_holdback_tail( unsigned *guard_owned )
     return ios_wow_window_try( base, guard_owned ) ? base : 0;
 }
 
+/* MADEIRA_CAGE_RELEASE=1: this session runs no Chromium, so neither the V8 cage
+ * holdback nor the PartitionAlloc pool slots [0x7400000000, 0x7C00000000) will
+ * be claimed. The app sets it for a Madeira Dock session (headless Steam
+ * client) and for a library game started directly; madeira.cfg can override it
+ * (0 for a game that embeds CEF). It enables the holdback release below and
+ * pool-slot steering of big reserves (allocate_virtual_memory). */
+static int ios_chromium_seen;
+
+static int ios_session_no_chromium( void )
+{
+    const char *e = getenv( "MADEIRA_CAGE_RELEASE" );
+    return e && *e == '1' && !ios_chromium_seen;
+}
+
+/* The launch-time classification can be wrong: a launcher .exe or a game may
+ * embed CEF. Chromium announces itself with a reserve of 8 GB or more (the V8
+ * cage, 8 GB; PartitionAlloc pools, 16 GB), which nothing else in these
+ * sessions asks for. From then on the session is treated as running Chromium:
+ * no more pool-slot steering or holdback release. A false positive (some other
+ * runtime's huge reserve) only restores the default layout. */
+static void ios_note_chromium_reserve( size_t size, ULONG type )
+{
+    if (ios_chromium_seen || !(type & MEM_RESERVE) || size < 0x200000000ULL) return;
+    ios_chromium_seen = 1;
+    dprintf( 2, "[cage] a 0x%lx reserve looks like Chromium: no-Chromium steering and "
+                "holdback release are off for the rest of the session\n", (unsigned long)size );
+}
+
 /* Give the unclaimed [cage] holdback to Wine's allocator when the band is
  * exhausted.
  *
@@ -8419,20 +8447,16 @@ static ULONG_PTR ios_wow_extend_holdback_tail( unsigned *guard_owned )
  * ios_cage_holdback_live is cleared, which disables the cage grant (it munmaps
  * the whole range) and the carve.
  *
- * Off unless MADEIRA_CAGE_RELEASE=1, which the app sets for a Madeira Dock
- * session (headless Steam client, no CEF). Called with virtual_mutex held.
- * Returns 1 if the holdback was handed over. */
+ * Off unless the session runs no Chromium (ios_session_no_chromium). Called
+ * with virtual_mutex held. Returns 1 if the holdback was handed over. */
 static int ios_cage_release_on_exhaustion( void *start, void *end, size_t want )
 {
-    /* 1: when the guest band is exhausted, hand the unclaimed 8 GB V8 cage
-     * holdback to it. Set by the app for a Madeira Dock session; off otherwise. */
-    const char *e = getenv( "MADEIRA_CAGE_RELEASE" );
     const ULONG_PTR lo = IOS_CAGE_BASE + ios_wow_guard_size();
     const ULONG_PTR hi = IOS_CAGE_BASE + IOS_CAGE_REAL_SIZE;
     ULONG_PTR s = (ULONG_PTR)start > lo ? (ULONG_PTR)start : lo;
     ULONG_PTR t = (ULONG_PTR)end < hi ? (ULONG_PTR)end : hi;
 
-    if (!ios_cage_holdback_live || !e || *e != '1') return 0;
+    if (!ios_cage_holdback_live || !ios_session_no_chromium()) return 0;
     if (t <= s || t - s < want) return 0;
     mmap_add_reserved_area( (void *)lo, hi - lo );
     ios_cage_holdback_live = 0;
@@ -20847,7 +20871,7 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
                  * makes the negative readable: "no steer match" with ios_steer_n>0 means the table
                  * lacks the entry, whereas no lines at all means this code path is not on the path
                  * FEX's VirtualAlloc2 takes. */
-                if ((uint64_t)(uintptr_t)base >= 0x7C00000000ULL)
+                if ((uint64_t)(uintptr_t)base >= 0x7400000000ULL)   /* every steer slot */
                 {
                     static int ac;
                     uint64_t nb = (uint64_t)(uintptr_t)base, ne = nb + size;
@@ -21704,6 +21728,7 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
         void  *jumbo_hint = *ret;
         size_t jumbo_size = *size_ptr;
         int    is_jumbo   = (jumbo_size >= 0x40000000 && (type & MEM_RESERVE));
+        ios_note_chromium_reserve( jumbo_size, type );
         /* ml125 [bigres]: settle the furniture attribution WITHOUT an FEX build.
          * The [window] probe found ~30 runs of ~511MB and I inferred FEXCore's
          * per-thread LookupCache (TotalCacheSize = VirtualMemSize/4096*8 +
@@ -22088,7 +22113,9 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
             if (!ios_steered
                 && !*ret && !limit && (type & MEM_RESERVE) && !(type & MEM_COMMIT)
                 && *size_ptr >= 0x2000000 && *size_ptr < 0x40000000
-                && (ios_bigres_reserved_total > (8ull << 30) || ios_va_pressure))
+                && (ios_bigres_reserved_total > (8ull << 30) || ios_va_pressure
+                    || (ios_session_no_chromium()
+                        && (ULONG_PTR)host_addr_space_limit > ios_steer_slot)))
             {
                 SIZE_T want = *size_ptr;
                 void *saved = *ret;
@@ -22110,54 +22137,70 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
                 }
                 if (sslot == 0xffff) sslot = stid & 15;
                 if (steer_tid[sslot].tid != stid) { steer_tid[sslot].tid = stid; steer_tid[sslot].n = 0; }
-                if (steer_tid[sslot].n >= 24)
+                /* A no-Chromium session steers every big reserve, mostly into the pool
+                 * slots, so there the cap counts and refuses only steers into the steer
+                 * slot (the FEX band it was built to protect); the pool slots stay open. */
+                const int no_cef = ios_session_no_chromium();
+                const int capped = steer_tid[sslot].n >= 24;
+                if (capped && steer_tid[sslot].n == 24)
                 {
-                    if (steer_tid[sslot].n == 24)
-                    {
-                        steer_tid[sslot].n++;
-                        dprintf(2, "[steer] tid=%04x CAPPED at 24 steered arenas — refusing further FEX-band spill rev=ml462\n", stid);
-                    }
+                    steer_tid[sslot].n++;
+                    dprintf(2, "[steer] tid=%04x CAPPED at 24 steered arenas — refusing further FEX-band spill rev=ml462\n", stid);
                 }
-                else
+                if (!capped || no_cef)
                 {
-                steer_tid[sslot].n++;
+                if (!no_cef) steer_tid[sslot].n++;
                 /* ml169: `limit` is 0 here ("unconstrained"), so passing it as limit_high
                  * described the EMPTY range [ios_spill_cap, 0) and every steer failed with
                  * *ret = 0x0. The upper bound has to be a real address: use the host VA
-                 * ceiling, which is_beyond_limit treats as EXCLUSIVE. */
-                NTSTATUS sst = allocate_virtual_memory( ret, size_ptr, type, protect,
-                                                        ios_steer_slot,
-                                                        (ULONG_PTR)host_addr_space_limit,
-                                                        0, 0 );
-                /* ml171: 16GB is not enough. Surviving longer spawns more threads, so
+                 * ceiling, which is_beyond_limit treats as EXCLUSIVE.
+                 *
+                 * ml171: 16GB is not enough. Surviving longer spawns more threads, so
                  * the reserve count went 27 -> 55 (28160MB) and BOTH the steer slot and
                  * furniture reported va-scan FAILED maxgap=0 before the NULL deref.
-                 * Fall back to the 0x7400000000 slot, which this run left UNGRANTED —
+                 * Fall back to the 0x7400000000 slot, which this run left UNGRANTED --
                  * pools landed on 0x7000000000, 0x73ffff0000 and 0x7800000000, matching
-                 * the 3-pool census. That doubles steer capacity to ~32GB. */
-                if (sst)
-                {
-                    *ret = saved; *size_ptr = want;
-                    sst = allocate_virtual_memory( ret, size_ptr, type, protect,
-                                                   0x7400000000ULL, ios_spill_cap, 0, 0 );
-                }
-                /* ml173: both steer slots full -> reclaim ranges owned by threads that
+                 * the 3-pool census. That doubles steer capacity to ~32GB.
+                 *
+                 * A session with no Chromium (ios_session_no_chromium) has no pools to
+                 * keep the slots for, so it steers every big reserve from the first one
+                 * (the arm test above) and fills the pool slots before the steer slot:
+                 * [0x7800000000, 0x7C00000000), which nothing else uses, then
+                 * [0x7400000000, ios_spill_cap), where relaxed furniture also spills.
+                 * The steer slot is shared with the FEX arena, whose 16MB requests failed
+                 * once steered reserves filled it (RimWorld with 52 mods). Placement no
+                 * longer depends on when ios_va_pressure happened to latch. */
+                const ULONG_PTR steer_cef[][2] = {
+                    { ios_steer_slot, 0 }, { 0x7400000000ULL, ios_spill_cap } };
+                const ULONG_PTR steer_no_cef[][2] = {
+                    { 0x7800000000ULL, ios_steer_slot }, { 0x7400000000ULL, ios_spill_cap },
+                    { ios_steer_slot, 0 } };
+                const ULONG_PTR (*slots)[2] = no_cef ? steer_no_cef : steer_cef;
+                /* capped: drop the trailing steer slot */
+                const unsigned nslots = no_cef ? ARRAY_SIZE(steer_no_cef) - (capped ? 1 : 0)
+                                               : ARRAY_SIZE(steer_cef);
+                NTSTATUS sst = STATUS_NO_MEMORY;
+                unsigned pass, si;
+
+                /* ml173: all steer slots full -> reclaim ranges owned by threads that
                  * have since exited, then retry once. This is what makes the steer
                  * region sustainable: the reserves leak per-thread, so without this any
                  * fixed capacity is exhausted by a long enough run. */
-                if (sst && ios_steer_reclaim_dead())
+                for (pass = 0; pass < 2 && sst; pass++)
                 {
-                    *ret = saved; *size_ptr = want;
-                    sst = allocate_virtual_memory( ret, size_ptr, type, protect,
-                                                   ios_steer_slot,
-                                                   (ULONG_PTR)host_addr_space_limit, 0, 0 );
-                    if (sst)
+                    if (pass && !ios_steer_reclaim_dead()) break;
+                    for (si = 0; si < nslots && sst; si++)
                     {
+                        /* a 63 GB map ends below the slot: nothing to try */
+                        if (slots[si][0] >= (ULONG_PTR)host_addr_space_limit) continue;
                         *ret = saved; *size_ptr = want;
-                        sst = allocate_virtual_memory( ret, size_ptr, type, protect,
-                                                       0x7400000000ULL, ios_spill_cap, 0, 0 );
+                        sst = allocate_virtual_memory( ret, size_ptr, type, protect, slots[si][0],
+                                                       slots[si][1] ? slots[si][1]
+                                                                    : (ULONG_PTR)host_addr_space_limit,
+                                                       0, 0 );
                     }
                 }
+                if (no_cef && !sst && (ULONG_PTR)*ret >= ios_steer_slot) steer_tid[sslot].n++;
                 if (!sst && ios_steer_n < IOS_STEER_MAX)
                 {
                     ios_steer[ios_steer_n].base = (uint64_t)(uintptr_t)*ret;
@@ -22177,7 +22220,7 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
                     dprintf(2, "[steer] #%u size=0x%lx reserved_total=%lluMB armed=%s -> %s %p\n",
                             steer_n, (unsigned long)want,
                             (unsigned long long)(ios_bigres_reserved_total >> 20),
-                            ios_va_pressure ? "va-pressure" : "8GB-total",
+                            no_cef ? "no-chromium" : ios_va_pressure ? "va-pressure" : "8GB-total",
                             sst ? "FAILED, falling back" : "above ceiling", *ret);
                 }
                 if (!sst) { st = sst; ios_steered = 1; }
@@ -22454,7 +22497,7 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
          * FEXMem_ThreadState allocation being hunted, which carries
          * MEM_COMMIT|MEM_RESERVE|MEM_TOP_DOWN (0x103000). Reserving allocations are the only ones
          * that can CHOOSE an address, so they are the only ones that can collide. */
-        if (!st && *ret && (uint64_t)(uintptr_t)*ret >= 0x7C00000000ULL)
+        if (!st && *ret && (uint64_t)(uintptr_t)*ret >= 0x7400000000ULL)   /* every steer slot */
         {
             static int nc;
             uint64_t nb = (uint64_t)(uintptr_t)*ret;
@@ -23494,6 +23537,7 @@ NTSTATUS WINAPI NtAllocateVirtualMemoryEx( HANDLE process, PVOID *ret, SIZE_T *s
         void  *jumbo_hint = *ret;
         size_t jumbo_size = *size_ptr;
         int    is_jumbo   = (jumbo_size >= 0x40000000 && (type & MEM_RESERVE));
+        ios_note_chromium_reserve( jumbo_size, type );
         /* ml125 [bigres]: settle the furniture attribution WITHOUT an FEX build.
          * The [window] probe found ~30 runs of ~511MB and I inferred FEXCore's
          * per-thread LookupCache (TotalCacheSize = VirtualMemSize/4096*8 +
@@ -23672,7 +23716,7 @@ NTSTATUS WINAPI NtAllocateVirtualMemoryEx( HANDLE process, PVOID *ret, SIZE_T *s
          * FEXMem_ThreadState allocation being hunted, which carries
          * MEM_COMMIT|MEM_RESERVE|MEM_TOP_DOWN (0x103000). Reserving allocations are the only ones
          * that can CHOOSE an address, so they are the only ones that can collide. */
-        if (!st && *ret && (uint64_t)(uintptr_t)*ret >= 0x7C00000000ULL)
+        if (!st && *ret && (uint64_t)(uintptr_t)*ret >= 0x7400000000ULL)   /* every steer slot */
         {
             static int nc;
             uint64_t nb = (uint64_t)(uintptr_t)*ret;

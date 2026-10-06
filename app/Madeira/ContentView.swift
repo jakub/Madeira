@@ -2638,6 +2638,16 @@ struct ContentView: View {
     /// Debugger stays attached during PE loading so mprotect_exec can use BRK
     /// to prepare code pages. Detach happens after Wine finishes + recovery.
     /// `profile` is a library entry whose launch profile applies to this run.
+    /// Whether a library launch runs no Chromium: a program started directly,
+    /// other than the Windows Steam client and its web helper. The desktop, a
+    /// script (which can start anything) and the unprofiled debug sequences
+    /// may run CEF.
+    static func launchRunsNoChromium(_ profile: LibraryEntry?) -> Bool {
+        guard let profile, profile.desktop != true else { return false }
+        let program = (profile.launchWindowsPath.split(separator: "\\").last.map(String.init) ?? "").lowercased()
+        return program.hasSuffix(".exe") && program != "steam.exe" && program != "steamwebhelper.exe"
+    }
+
     private func runWineFullSequence(profile: LibraryEntry? = nil) {
         guard jit_check_debugged() else {
             logStore.log("JIT not enabled. Press 'Enable JIT' first.", level: .error)
@@ -2790,12 +2800,17 @@ struct ContentView: View {
             } else {
                 unsetenv("MADEIRA_DOCK_SESSION")
             }
-            // A Dock session runs Valve's client headless, with no Chromium, so
-            // nothing claims the 8 GB V8 cage holdback (virtual_ios.c). Let ntdll
-            // hand it to the allocator when the guest band runs out. madeira.cfg
-            // env.MADEIRA_CAGE_RELEASE, exported later, wins.
-            if dockLaunch.dock {
+            // A session with no Chromium leaves the 8 GB V8 cage holdback and the
+            // PartitionAlloc pool slots unclaimed (virtual_ios.c): ntdll hands the
+            // holdback to the allocator when the guest band runs out and steers big
+            // reserves into the pool slots. A Dock session runs Valve's client
+            // headless; a library game started directly (not the desktop, not the
+            // Windows Steam client, not a script that could start it) runs no CEF.
+            // madeira.cfg env.MADEIRA_CAGE_RELEASE, exported later, wins: 0 for a
+            // game that embeds Chromium.
+            if dockLaunch.dock || Self.launchRunsNoChromium(profile) {
                 setenv("MADEIRA_CAGE_RELEASE", "1", 1)
+                logStore.log("[cage] no-Chromium session (\(dockLaunch.dock ? "dock" : "direct game")): cage release and pool-slot steering on")
             } else {
                 unsetenv("MADEIRA_CAGE_RELEASE")
             }
