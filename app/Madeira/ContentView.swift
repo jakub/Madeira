@@ -1476,8 +1476,8 @@ struct ContentView: View {
         .persistentSystemOverlays(.hidden)
         // The overlay windows above this one answer for the same preferences
         // (OverlayHostingController) while a session is up.
-        .onAppear { GameSessionChrome.active = true }
-        .onDisappear { GameSessionChrome.active = false }
+        .onAppear { GameSessionChrome.active = true; SessionMemoryLog.start() }
+        .onDisappear { GameSessionChrome.active = false; SessionMemoryLog.stop() }
     }
 
     /// Portrait: classic tooling layout — header, badges, 240pt game strip,
