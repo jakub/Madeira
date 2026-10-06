@@ -63,6 +63,12 @@ DXMT now reports user32's monitor by default (`DXMT_WSI_MONITOR_IDENTITY`; set `
 
 The cursor that Madeira draws over the game, and absolute trackpad moves, used to assume a 1024x768 guest. At 1048x720 that put the arrow up to about 2% below and to the right of the point the game hit-tests. Both now use the live guest size, so the highlighted control and the arrow tip agree.
 
+## 3a. DLC
+
+- **Getting it.** Madeira's Steam downloader installs every DLC the account owns with the game. For RimWorld these are Royalty, Ideology, Biotech, Anomaly and Odyssey; each 64-bit depot goes to `Data/<DLC>`. A game installed before this shows as Update: refresh the library, then press Update. Existing files are only hash-checked, not downloaded again. The log line `[steam-depot] dlc app=294100 kept=...` lists the depots taken.
+- **Loading it.** RimWorld checks DLC ownership only while Steam is running (`ModLister.TryAddMod`: `SteamManager.Initialized && SteamApps.BIsDlcInstalled`). Run without Steam (Start with: The game), it loads every official expansion folder in `Data/`.
+- **The FEX fix it needed.** The larger game reaches an unaligned guest atomic. FEX's `HandleUnalignedAccess` takes its backpatch lock with LDAXR/STLXR on a word inside the JIT code buffer. On the ARM64EC module that lock went through the read-execute alias, and Mono died with `Got a UNKNOWN while executing native code` (`BUS: unhandled store ... stlxr` in the Madeira log). FEX `f021129` takes it through the writable alias, as the WOW64 module already did.
+
 ## 4a. iPad system UI and the trackpad
 
 - **Run Madeira full screen.** Choose Settings → Multitasking & Gestures → Full Screen Apps. A windowed app keeps the status bar, and iPadOS refuses pointer lock to it.
