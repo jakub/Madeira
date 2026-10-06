@@ -5408,6 +5408,18 @@ static void *address_space_start = (void *)0x100010000; /* above iOS 4GB __PAGEZ
 #else
 static void *address_space_start = (void *)0x10000;
 #endif
+/* The lowest address any view can get on iOS: the 4 GB __PAGEZERO covers
+ * [0, 0x100000000), so every placement, the unclamped kernel pick included,
+ * satisfies a limit_low at or below this. A request whose limit_low is that low
+ * is not constrained by it (see ceiling_relaxable in map_view). */
+static const ULONG_PTR ios_lowest_placement = 0x100010000;
+
+/* Whether a caller's limit_low leaves the furniture ceiling relaxable: true
+ * when every placement satisfies it anyway (see map_view). */
+static inline int ios_limit_low_is_free( ULONG_PTR limit_low )
+{
+    return limit_low <= ios_lowest_placement;
+}
 #ifdef _WIN64
 static void *address_space_limit = (void *)0x7fffffff0000;  /* top of the total available address space */
 static void *user_space_limit    = (void *)0x7fffffff0000;  /* top of the user address space */
@@ -14695,8 +14707,17 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
              * anyway, so treat it as absent: the floor is above it, and
              * relaxing reproduces exactly what a ceiling-disabled build does
              * for the same call. (top_down is a hint, not a contract, and is
-             * knowingly dropped on the relax path.) */
-            ceiling_relaxable = (limit_low <= (ULONG_PTR)address_space_start);
+             * knowingly dropped on the relax path.)
+             *
+             * Compare against the lowest address a placement can ever have, not
+             * address_space_start: a native win64 process lowers that to
+             * 0x10000 (virtual_init), and then the thread stacks' limit_4g
+             * (kernel and ChpeV2 stacks, thread_ios.c) counted as a real
+             * constraint. They got no floor raise and no relax, and failed
+             * hard with STATUS_NO_MEMORY once the band was full, while 32 GB
+             * above the ceiling stayed free: RimWorld with mods lost its
+             * threads to "Couldn't create thread. Error 0x8". */
+            ceiling_relaxable = ios_limit_low_is_free( limit_low );
         }
         size_t host_size = ROUND_SIZE( 0, size, host_page_mask );
         size_t unmap_size, view_size = host_size + align_mask + 1;
