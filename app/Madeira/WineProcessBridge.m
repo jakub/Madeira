@@ -394,6 +394,43 @@ static void madeira_ensure_locallow(NSString *prefix)
     ws_log( "[profile] users/%s/AppData/LocalLow %s", name, made ? "created" : "could NOT be created" );
 }
 
+/* Unity dynamic fonts that name an OS font "Arial" (RimWorld's Arial_small and
+ * Arial_medium) look it up themselves: Unity scans C:\windows\Fonts and keys
+ * each face by its FreeType family name, matched exactly, ignoring file names,
+ * the registry and Wine's FontSubstitutes/Replacements (Arial -> Tahoma). The
+ * template prefix has no Arial, so every glyph comes back 2x2 with a zero
+ * advance, every label measures 0 px and no text draws.
+ *
+ * Ship Liberation Sans (SIL OFL 1.1, metric-compatible with Arial) with its
+ * family renamed to "Arial" (tools/fonts/make-arial.py) and copy each style in
+ * when that arial*.ttf is missing or empty -- an Arial the user installed is
+ * never replaced. Idempotent and cheap, so it runs on every launch. */
+static void madeira_ensure_arial_fonts(NSString *prefix)
+{
+    static const char *const files[] = { "arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf" };
+    NSFileManager *fm = [NSFileManager defaultManager];
+    /* Not "fonts": Wine loads <bundle>/fonts as its data-dir font folder. */
+    NSString *bundled = [[NSBundle mainBundle] pathForResource:@"arial-fonts" ofType:nil];
+    NSString *fontsDir = [prefix stringByAppendingPathComponent:@"drive_c/windows/Fonts"];
+    int copied = 0;
+
+    if (!bundled) { LOG( "arial: bundled fonts folder missing" ); return; }
+    [fm createDirectoryAtPath:fontsDir withIntermediateDirectories:YES attributes:nil error:nil];
+    for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); i++)
+    {
+        NSString *dst = [fontsDir stringByAppendingPathComponent:@(files[i])];
+        NSDictionary *attrs = [fm attributesOfItemAtPath:dst error:nil];
+        if (attrs && [attrs fileSize] > 0) continue;
+        [fm removeItemAtPath:dst error:nil];
+        if ([fm copyItemAtPath:[bundled stringByAppendingPathComponent:@(files[i])] toPath:dst error:nil])
+            copied++;
+        else
+            LOG( "arial: could not copy %{public}s", files[i] );
+    }
+    if (copied)
+        dprintf( 2, "[arial] installed %d Arial (Liberation Sans) file(s)\n", copied );
+}
+
 /***********************************************************************
  *           madeira_seed_prefix_if_needed
  *
@@ -449,6 +486,7 @@ void madeira_seed_prefix_if_needed(const char *prefix_path) {
         /* ml581: see madeira_undo_appdata_skeleton() above. */
         madeira_undo_appdata_skeleton( prefix );
         madeira_ensure_locallow( prefix );
+        madeira_ensure_arial_fonts( prefix );
     }
 }
 
