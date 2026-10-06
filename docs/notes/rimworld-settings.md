@@ -11,7 +11,7 @@ Set these in the game's details page.
 | Setting | Value | Why |
 | --- | --- | --- |
 | Start with | **The game** | RimWorld is DRM-free and runs without Steam. With this choice it shows a "Could not initialize Steam API" dialog at start; select **Ignore**. Madeira Dock was not tested for this setup. |
-| Resolution | **Screen shape** | Matches the virtual monitor to the display shape: 1048x720 on the iPad Pro 11-inch (1.456:1 against the panel's 1.451:1). The default, 1408x648, has an iPhone shape and gives letterboxing on an iPad. |
+| Resolution | **Native** (2816x1940 on the iPad Pro 11-inch), or **Screen shape** (1048x720) | Native presents the game 1:1 with the panel's pixels. Set RimWorld's UI scale to 2.5 (Options → Interface): the interface then lays out at 1126x776, about the size Screen shape gives, but with sharp text and art. Measured on a colony map: 60 FPS, GPU 34% (5.6 ms), 3.3 GB of memory. Screen shape is lighter but scales up about 2.7x, which looks soft. RimWorld allows a UI scale only while the screen divided by the scale stays at least 1024x768, so 2.5 is the largest at native. Its own recommended scale there, 1.5, is too small on an 11-inch screen. |
 | Aspect & scaling | **Fit** | Keeps the layer and the touch mapping in agreement. Use **Aspect** only if the game's back buffer shape differs from the monitor. |
 
 ## 2. Wine prefix: an OS font named "Arial"
@@ -43,9 +43,10 @@ At start, RimWorld applies `Config/Prefs.xml` and overrides Unity's registry val
 The file is in `Documents/wine/drive_c/users/mobile/AppData/LocalLow/Ludeon Studios/RimWorld by Ludeon Studios/Config/Prefs.xml`. Set:
 
 ```xml
-<screenWidth>1048</screenWidth>   <!-- = Madeira's Resolution -->
-<screenHeight>720</screenHeight>
+<screenWidth>2816</screenWidth>   <!-- = Madeira's Resolution (1048 x 720 for Screen shape) -->
+<screenHeight>1940</screenHeight>
 <fullscreen>True</fullscreen>
+<uiScale>2.5</uiScale>            <!-- 1 for Screen shape -->
 ```
 
 The values left from the iPhone default were 1048x648 with `fullscreen=False`. They gave a decorated window: its title bar shifted the content, the back buffer was 1048x648 and was stretched onto the 1048x720 monitor (it looked squashed), and taps landed off target.
