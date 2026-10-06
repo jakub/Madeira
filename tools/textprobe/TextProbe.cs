@@ -1,8 +1,10 @@
 // TextProbe: diagnostic RimWorld mod. Logs translation, font and text-layout state to Player.log
-// to find why no text renders under Madeira. Read-only: changes no game state.
+// to find why no text renders under Madeira, and per-click mouse/window geometry to find why taps
+// land off target. Read-only: changes no game state.
 using System;
 using System.Collections;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using UnityEngine;
 
 namespace TextProbe
@@ -80,6 +82,13 @@ namespace TextProbe
                 L("GUI.skin.font=" + (GUI.skin != null && GUI.skin.font != null ? GUI.skin.font.name : "<null>"));
             });
 
+            Try("mouseprobe", () =>
+            {
+                var go = new GameObject("TextProbe.MouseProbe");
+                UnityEngine.Object.DontDestroyOnLoad(go);
+                go.AddComponent<MouseProbe>();
+            });
+
             L("end");
         }
 
@@ -114,6 +123,50 @@ namespace TextProbe
                 bool ok = gen.Populate("New colony", s);
                 L(label + "   TextGenerator.Populate=" + ok + " chars=" + gen.characterCount + " visible=" + gen.characterCountVisible + " verts=" + gen.vertexCount + " lines=" + gen.lineCount + " prefW=" + gen.GetPreferredWidth("New colony", s));
             });
+        }
+    }
+
+    // Logs, for each left click, Unity's view of the mouse next to user32's, so an offset between
+    // where the OS cursor is drawn and where the game hit-tests can be attributed to the window's
+    // client origin, Unity's Screen size or RimWorld's UI scale.
+    public class MouseProbe : MonoBehaviour
+    {
+        [StructLayout(LayoutKind.Sequential)] struct POINT { public int x, y; }
+        [StructLayout(LayoutKind.Sequential)] struct RECT { public int l, t, r, b; public override string ToString() { return "{" + l + "," + t + "," + r + "," + b + "}"; } }
+        [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
+        [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] static extern IntPtr GetActiveWindow();
+        [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+        [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr h, out RECT r);
+        [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr h, ref POINT p);
+        [DllImport("user32.dll")] static extern bool ScreenToClient(IntPtr h, ref POINT p);
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] static extern int GetWindowLong(IntPtr h, int i);
+
+        int clicks;
+
+        static void L(string s) { Debug.Log("[mouseprobe] " + s); }
+
+        void Update()
+        {
+            if (clicks >= 40 || !Input.GetMouseButtonDown(0)) return;
+            clicks++;
+            try
+            {
+                Vector3 m = Input.mousePosition;
+                IntPtr h = GetActiveWindow();
+                if (h == IntPtr.Zero) h = GetForegroundWindow();
+                POINT c; GetCursorPos(out c);
+                POINT cc = c; ScreenToClient(h, ref cc);
+                POINT o = new POINT(); ClientToScreen(h, ref o);
+                RECT wr, cr; GetWindowRect(h, out wr); GetClientRect(h, out cr);
+                L("#" + clicks + " unity=(" + m.x + "," + m.y + ") gui=(" + m.x + "," + (Screen.height - m.y) + ")"
+                  + " screen=" + Screen.width + "x" + Screen.height + " cur=" + Screen.currentResolution + " mode=" + Screen.fullScreenMode
+                  + " | cursor=(" + c.x + "," + c.y + ") client=(" + cc.x + "," + cc.y + ") origin=(" + o.x + "," + o.y + ")"
+                  + " wr=" + wr + " cr=" + cr + " hwnd=0x" + h.ToString("x")
+                  + " style=0x" + GetWindowLong(h, -16).ToString("x8") + " ex=0x" + GetWindowLong(h, -20).ToString("x8")
+                  + " uiScale=" + Verse.Prefs.UIScale + " uiMouse=" + Verse.UI.MousePositionOnUIInverted);
+            }
+            catch (Exception e) { L("#" + clicks + " THREW " + e.GetType().Name + ": " + e.Message); }
         }
     }
 }
