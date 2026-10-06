@@ -53,8 +53,10 @@ enum SteamInstallFiles {
 
     /// Removes an app's install: its folder under `common`, its record, its
     /// resume journal and the records of the apps that own its shared depots
-    /// (those describe the same folder). Only paths strictly inside
-    /// `steamApps/common` are removed.
+    /// (those describe the same folder), and the Workshop items Madeira
+    /// installed for it with their record. Only paths strictly inside
+    /// `steamApps/common`, and Workshop folders the Madeira record lists at
+    /// their own place, are removed.
     nonisolated static func delete(appID: Int, folderName: String, steamApps: URL) {
         let fm = FileManager.default
         let common = steamApps.appendingPathComponent("common", isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
@@ -75,6 +77,15 @@ enum SteamInstallFiles {
         }
         try? fm.removeItem(at: recordURL)
         try? fm.removeItem(at: steamApps.appendingPathComponent("downloading/\(appID)", isDirectory: true))
+        // Workshop items in a game's own folder went with it; others sit in
+        // Valve's layout, where only what the Madeira record lists is removed.
+        let workshop = WorkshopRecord.load(appID: UInt32(appID), steamApps: steamApps)
+        for (id, entry) in workshop.items
+        where WorkshopInstall.isExpected(entry, itemID: id, appID: workshop.appID, installFolder: safeFolderName(folderName)) {
+            try? fm.removeItem(at: steamApps.appendingPathComponent(entry.folder, isDirectory: true))
+            try? fm.removeItem(at: steamApps.appendingPathComponent("downloading/workshop/\(id)", isDirectory: true))
+        }
+        try? fm.removeItem(at: WorkshopRecord.url(appID: UInt32(appID), steamApps: steamApps))
     }
 
     /// Validates a manifest path and folds directory spelling to the first

@@ -66,6 +66,9 @@ final class DepotDownloader {
     /// Replaces the content server directory (host tests only): the servers
     /// to fetch from, as `https://host` or `http://host:port` URLs.
     var contentHosts: ((_ appID: UInt32) async throws -> [String])?
+    /// The owned DLC depots the last install could not get (key or manifest
+    /// refused): not missing content to download again.
+    private(set) var lastDLCSkipped: [UInt32] = []
 
     init(session: SteamCMSession) {
         self.session = session
@@ -153,6 +156,7 @@ final class DepotDownloader {
                                    declaredSize: depot.publicSizeBytes, health: health,
                                    dlcAppID: depot.dlcAppID))
         }
+        lastDLCSkipped = dlcSkipped
         let dlcKept = plans.filter { $0.dlcAppID != nil }
         if !dlcKept.isEmpty || !dlcSkipped.isEmpty {
             SteamLog.event("[steam-depot] dlc app=\(app.appID) kept=\(dlcKept.map { "\($0.depotID)<\($0.dlcAppID ?? 0)" }.joined(separator: ",")) skipped=\(dlcSkipped.map(String.init).joined(separator: ","))")
@@ -239,8 +243,21 @@ final class DepotDownloader {
         let work = Self.workshopWorkFolder(itemID: item.id, steamApps: steamApps)
         let journalDir = work.appendingPathComponent("journal", isDirectory: true)
         let content = work.appendingPathComponent("content", isDirectory: true)
-        try FileManager.default.createDirectory(at: journalDir, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: content, withIntermediateDirectories: true)
+        // The staging folder resumes only the same content. Another manifest (the
+        // author updated the item while it was paused) or an emptied folder
+        // starts over: the old files would otherwise ship with the new ones,
+        // and a journal without its files would mark chunks done that are not.
+        let fm = FileManager.default
+        let marker = work.appendingPathComponent("content-id")
+        let wanted = item.manifestID != 0 ? "manifest \(item.manifestID)" : "legacy \(item.timeUpdated)"
+        let stagedEmpty = ((try? fm.contentsOfDirectory(atPath: content.path)) ?? []).isEmpty
+        if (try? String(contentsOf: marker, encoding: .utf8)) != wanted || stagedEmpty {
+            try? fm.removeItem(at: journalDir)
+            try? fm.removeItem(at: content)
+        }
+        try fm.createDirectory(at: journalDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: content, withIntermediateDirectories: true)
+        try wanted.write(to: marker, atomically: true, encoding: .utf8)
         var state = SteamDownloadProgress()
         report(state)
 

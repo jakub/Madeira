@@ -20,6 +20,8 @@ struct WorkshopRecord: Codable, Equatable {
         /// The mod that required it, when no collection lists it.
         var requiredBy: UInt64?
         var bytes: UInt64
+        /// A second copy of this mod found beside it when it was installed.
+        var warning: String?
     }
 
     var appID: UInt32
@@ -62,6 +64,9 @@ enum WorkshopInstall {
     struct Plan: Equatable {
         /// New items and items whose content changed, in the collection's order.
         var install: [WorkshopItem] = []
+        /// Items whose place is taken by a folder Madeira did not install (a
+        /// copy made by hand or by Valve's client): left alone, reported.
+        var conflicts: [WorkshopItem] = []
         /// Recorded items the collection no longer resolves to (item IDs).
         var remove: [String] = []
         var unchanged = 0
@@ -69,15 +74,22 @@ enum WorkshopInstall {
     }
 
     /// What a sync has to do: install what is new or changed (another manifest,
-    /// a legacy item updated, or its folder gone), remove what was dropped.
-    static func plan(_ resolution: SteamWorkshop.Resolution, record: WorkshopRecord,
+    /// a legacy item updated, or its folder gone), and remove what the
+    /// collection no longer lists or requires. An item it still lists but that
+    /// was skipped this time (unreadable, private, banned, not answered) is kept.
+    static func plan(_ resolution: SteamWorkshop.Resolution, record: WorkshopRecord, installFolder: String,
                      folderExists: (String) -> Bool) -> Plan {
         var plan = Plan()
-        let wanted = Set(resolution.mods.map { String($0.id) })
+        let wanted = Set(resolution.listed.map(String.init)).union(resolution.mods.map { String($0.id) })
         for item in resolution.mods {
-            if let entry = record.items[String(item.id)], entry.manifest == String(item.manifestID),
-               item.manifestID != 0 || entry.timeUpdated == item.timeUpdated, folderExists(entry.folder) {
+            let id = String(item.id)
+            let relative = folder(itemID: item.id, appID: record.appID, installFolder: installFolder)
+            let ours = record.items[id].map { isExpected($0, itemID: id, appID: record.appID, installFolder: installFolder) } ?? false
+            if ours, let entry = record.items[id], entry.manifest == String(item.manifestID),
+               item.manifestID != 0 || entry.timeUpdated == item.timeUpdated, folderExists(relative) {
                 plan.unchanged += 1
+            } else if !ours, folderExists(relative) {
+                plan.conflicts.append(item)
             } else {
                 plan.install.append(item)
             }
@@ -86,9 +98,12 @@ enum WorkshopInstall {
         return plan
     }
 
-    /// A relative folder that stays inside `steamapps` (no `..`, not absolute).
-    static func isContained(_ relative: String) -> Bool {
-        !relative.isEmpty && !relative.hasPrefix("/") && !relative.split(separator: "/").contains("..")
+    /// Whether a recorded folder is exactly where this item belongs. A sync
+    /// replaces or deletes only such a folder: never anything a record
+    /// (which sits on the Wine drive, writable by the guest) merely claims.
+    static func isExpected(_ entry: WorkshopRecord.Entry, itemID: String, appID: UInt32, installFolder: String) -> Bool {
+        guard let id = UInt64(itemID) else { return false }
+        return entry.folder == folder(itemID: id, appID: appID, installFolder: installFolder)
     }
 
     /// The `<packageId>` an About/About.xml declares, lower-cased as RimWorld
@@ -125,22 +140,37 @@ enum WorkshopInstall {
         var installed = 0
         var removed = 0
         var unchanged = 0
+        var failed = 0
         var bytes: UInt64 = 0
-        /// "<title>: also installed by hand in Mods/<folder>; remove that copy".
+        /// Items left alone or not installed this time, and second copies.
         var warnings: [String] = []
+    }
+
+    static func conflictWarning(_ item: WorkshopItem, appID: UInt32, installFolder: String) -> String {
+        "\(item.title): \(folder(itemID: item.id, appID: appID, installFolder: installFolder)) already exists and was not installed by Madeira; it was left alone"
+    }
+
+    /// The warnings the record keeps (second copies), for the game's page.
+    static func recordedWarnings(_ record: WorkshopRecord) -> [String] {
+        record.items.keys.sorted().compactMap { record.items[$0]?.warning }
     }
 
     /// Applies a plan: each item is downloaded to its staging folder by
     /// `download`, then swapped into place (the old copy is moved aside, the new
     /// one renamed in, the old one deleted), and the record is saved after every
-    /// item so an interruption keeps what finished. Dropped items' recorded
-    /// folders are deleted. `progress` reports items done of the total.
+    /// item so an interruption keeps what finished. An item that fails is
+    /// reported and the rest go on. A folder already at an item's place that
+    /// the record does not list as that item's (a copy installed by hand, or by
+    /// Valve's client) is never touched: the item is skipped with a warning.
+    /// Dropped items' recorded folders are deleted. `progress` reports items
+    /// done of the total.
     static func apply(_ plan: Plan, resolution: SteamWorkshop.Resolution, record: inout WorkshopRecord,
                       installFolder: String, steamApps: URL,
                       download: (WorkshopItem) async throws -> (folder: URL, bytes: UInt64),
                       progress: (_ done: Int, _ total: Int, _ title: String) -> Void) async throws -> Result {
         let fm = FileManager.default
         var result = Result(unchanged: plan.unchanged)
+        result.warnings = plan.conflicts.map { conflictWarning($0, appID: record.appID, installFolder: installFolder) }
         record.collection = resolution.collection.id
         let total = plan.install.count + plan.remove.count
         var done = 0
@@ -148,41 +178,58 @@ enum WorkshopInstall {
         for item in plan.install {
             try Task.checkCancellation()
             progress(done, total, item.title)
+            done += 1
+            let id = String(item.id)
             let relative = folder(itemID: item.id, appID: record.appID, installFolder: installFolder)
-            guard isContained(relative) else { continue }
-            let staged = try await download(item)
             let destination = steamApps.appendingPathComponent(relative, isDirectory: true)
-            try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let ours = record.items[id].map { isExpected($0, itemID: id, appID: record.appID, installFolder: installFolder) } ?? false
+            if fm.fileExists(atPath: destination.path), !ours {
+                result.warnings.append(conflictWarning(item, appID: record.appID, installFolder: installFolder))
+                continue
+            }
+            let staged: (folder: URL, bytes: UInt64)
+            do {
+                staged = try await download(item)
+            } catch {
+                if error is CancellationError || Task.isCancelled { throw error }
+                result.failed += 1
+                result.warnings.append("\(item.title): not installed (\(error.localizedDescription))")
+                continue
+            }
             let work = staged.folder.deletingLastPathComponent()
+            // The content is complete: its journal must not outlive it, or a
+            // later download would trust chunks that are no longer on disk.
+            try? fm.removeItem(at: work.appendingPathComponent("journal", isDirectory: true))
+            try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
             let aside = work.appendingPathComponent("previous", isDirectory: true)
             try? fm.removeItem(at: aside)
             if fm.fileExists(atPath: destination.path) { try fm.moveItem(at: destination, to: aside) }
             try fm.moveItem(at: staged.folder, to: destination)
             try? fm.removeItem(at: work)
-            record.items[String(item.id)] = WorkshopRecord.Entry(
+            let managed = Set(record.items.values.map(\.folder)).union([relative])
+            let copies = duplicates(of: destination, managed: managed, steamApps: steamApps)
+            let warning = copies.isEmpty ? nil
+                : "\(item.title): also installed by hand in \(copies.map { "\(destination.deletingLastPathComponent().lastPathComponent)/\($0)" }.joined(separator: ", ")); remove that copy"
+            record.items[id] = WorkshopRecord.Entry(
                 title: item.title, manifest: String(item.manifestID), timeUpdated: item.timeUpdated,
-                folder: relative, requiredBy: resolution.requiredBy[item.id], bytes: staged.bytes)
+                folder: relative, requiredBy: resolution.requiredBy[item.id], bytes: staged.bytes, warning: warning)
             try record.save(steamApps: steamApps)
             result.installed += 1
             result.bytes += staged.bytes
-            done += 1
-            let managed = Set(record.items.values.map(\.folder))
-            for copy in duplicates(of: destination, managed: managed, steamApps: steamApps) {
-                result.warnings.append("\(item.title): also installed by hand in \(destination.deletingLastPathComponent().lastPathComponent)/\(copy); remove that copy")
-            }
         }
 
         for id in plan.remove {
             try Task.checkCancellation()
             guard let entry = record.items[id] else { continue }
             progress(done, total, entry.title)
-            if isContained(entry.folder) {
+            done += 1
+            if isExpected(entry, itemID: id, appID: record.appID, installFolder: installFolder) {
                 try? fm.removeItem(at: steamApps.appendingPathComponent(entry.folder, isDirectory: true))
             }
+            try? fm.removeItem(at: steamApps.appendingPathComponent("downloading/workshop/\(id)", isDirectory: true))
             record.items[id] = nil
             try record.save(steamApps: steamApps)
             result.removed += 1
-            done += 1
         }
         try record.save(steamApps: steamApps)
         progress(done, total, "")

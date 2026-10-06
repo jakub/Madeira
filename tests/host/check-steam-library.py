@@ -838,6 +838,57 @@ func packageBuffer(apps: [UInt32], depots: [UInt32]) -> Data {
     }
     require(wsResolved.mods.map(\.id) == [1, 2, 10, 20, 21] && wsResolved.requiredBy == [20: 2, 21: 20], "a collection resolves nested collections and required items once each, cycles included")
     require(wsResolved.skipped.count == 4, "items for another game, banned, unreadable or not mods are left out with a reason")
+    require(wsResolved.listed.isSuperset(of: [1, 2, 10, 20, 21, 3, 4, 5, 6]), "the walk lists every item reached, skipped ones included")
+    do { _ = try await SteamWorkshop.resolve(collection: 6, appID: 294100) { batch in try SteamWorkshop.parseDetails(wsResponse(batch.compactMap { wsWorld[$0] })) }; require(false, "a root that is not a collection or mod is refused") }
+    catch let e as WorkshopError { if case .unsuitable = e { require(true, "a root that is not a collection or mod is refused") } else { require(false, "a root that is not a collection or mod is refused") } }
+
+    // ---- Workshop: plan and apply against Madeira's record
+    let wsFM = FileManager.default
+    let wsRoot = wsFM.temporaryDirectory.appendingPathComponent("madeira-ws-\(getpid())")
+    try? wsFM.removeItem(at: wsRoot)
+    let wsApps = wsRoot.appendingPathComponent("steamapps")
+    let wsMods = wsApps.appendingPathComponent("common/RimWorld/Mods")
+    try wsFM.createDirectory(at: wsMods.appendingPathComponent("Harmony/About"), withIntermediateDirectories: true)
+    try "<packageId>brrainz.harmony</packageId>".write(to: wsMods.appendingPathComponent("Harmony/About/About.xml"), atomically: true, encoding: .utf8)
+    try wsFM.createDirectory(at: wsMods.appendingPathComponent("42"), withIntermediateDirectories: true)
+    try "mine".write(to: wsMods.appendingPathComponent("42/note.txt"), atomically: true, encoding: .utf8)
+    func wsItem(_ id: UInt64, _ manifest: UInt64) -> WorkshopItem {
+        var i = WorkshopItem(id: id); i.result = 1; i.consumerAppID = 294100; i.manifestID = manifest; i.title = "mod \(id)"; return i
+    }
+    var wsFiles: [UInt64: [String: String]] = [1: ["About/About.xml": "<packageId>brrainz.harmony</packageId>", "old.dll": "1"], 2: ["a": "1"]]
+    let wsDownload: (WorkshopItem) async throws -> (folder: URL, bytes: UInt64) = { it in
+        if it.id == 9 { throw SteamError.chunkDownloadFailed("refused") }
+        let content = wsApps.appendingPathComponent("downloading/workshop/\(it.id)/content")
+        for (path, text) in wsFiles[it.id] ?? ["x": "x"] {
+            let url = content.appendingPathComponent(path)
+            try wsFM.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        }
+        return (content, 1)
+    }
+    let wsExists: (String) -> Bool = { wsFM.fileExists(atPath: wsApps.appendingPathComponent($0).path) }
+    var wsColl = WorkshopItem(id: 100); wsColl.result = 1; wsColl.fileType = 2
+    var wsRes = SteamWorkshop.Resolution(collection: wsColl, mods: [wsItem(1, 11), wsItem(2, 21), wsItem(42, 420), wsItem(9, 90)], listed: [1, 2, 42, 9])
+    var wsRec = WorkshopRecord.load(appID: 294100, steamApps: wsApps)
+    let wsPlan1 = WorkshopInstall.plan(wsRes, record: wsRec, installFolder: "RimWorld", folderExists: wsExists)
+    require(wsPlan1.install.map(\.id) == [1, 2, 9] && wsPlan1.conflicts.map(\.id) == [42], "a folder Madeira did not install is a conflict, not work")
+    let wsR1 = try await WorkshopInstall.apply(wsPlan1, resolution: wsRes, record: &wsRec, installFolder: "RimWorld", steamApps: wsApps, download: wsDownload) { _, _, _ in }
+    require(wsR1.installed == 2 && wsR1.failed == 1 && wsFM.fileExists(atPath: wsMods.appendingPathComponent("1/old.dll").path), "a failing item is reported and the others install")
+    require(wsFM.fileExists(atPath: wsMods.appendingPathComponent("42/note.txt").path) && wsRec.items["42"] == nil, "a hand-made Mods/<id> is never replaced")
+    require(wsRec.items["1"]?.warning?.contains("Harmony") == true && WorkshopRecord.load(appID: 294100, steamApps: wsApps) == wsRec, "a second copy is recorded with the item; the record persists")
+    wsFiles[1] = ["About/About.xml": "<packageId>brrainz.harmony</packageId>", "new.dll": "2"]
+    wsRes.mods[0] = wsItem(1, 12)
+    let wsPlan2 = WorkshopInstall.plan(wsRes, record: wsRec, installFolder: "RimWorld", folderExists: wsExists)
+    _ = try await WorkshopInstall.apply(wsPlan2, resolution: wsRes, record: &wsRec, installFolder: "RimWorld", steamApps: wsApps, download: wsDownload) { _, _, _ in }
+    require(wsFM.fileExists(atPath: wsMods.appendingPathComponent("1/new.dll").path) && !wsFM.fileExists(atPath: wsMods.appendingPathComponent("1/old.dll").path), "an update replaces the folder, leaving no stale files")
+    var wsSkip = wsRes; wsSkip.mods = [wsItem(1, 12)]; wsSkip.skipped = [2: "not available (result 0)"]
+    require(WorkshopInstall.plan(wsSkip, record: wsRec, installFolder: "RimWorld", folderExists: wsExists).remove.isEmpty, "a listed but skipped item is kept")
+    var wsDrop = wsRes; wsDrop.mods = [wsItem(1, 12)]; wsDrop.listed = [1]
+    wsRec.items["5"] = WorkshopRecord.Entry(title: "tampered", manifest: "1", timeUpdated: 0, folder: ".", requiredBy: nil, bytes: 0)
+    let wsPlan3 = WorkshopInstall.plan(wsDrop, record: wsRec, installFolder: "RimWorld", folderExists: wsExists)
+    _ = try await WorkshopInstall.apply(wsPlan3, resolution: wsDrop, record: &wsRec, installFolder: "RimWorld", steamApps: wsApps, download: wsDownload) { _, _, _ in }
+    require(!wsFM.fileExists(atPath: wsMods.appendingPathComponent("2").path) && wsFM.fileExists(atPath: wsMods.path) && wsRec.items.keys.sorted() == ["1"], "dropped items' own folders are removed; a tampered record path deletes nothing")
+    try? wsFM.removeItem(at: wsRoot)
     let legacy = SteamAppInfo.parse(appID: 10, from: appVDF(#"""
     "common" { "name" "Old" "type" "Game" "oslist" "windows" } "config" { "installdir" "Old" }
     "depots" { "201" { "config" { "oslist" "windows" "osarch" "32" } "manifests" { "public" "2001" } } "202" { "manifests" { "public" "2002" } } }

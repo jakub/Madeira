@@ -39,6 +39,7 @@ struct WorkshopItem: Sendable, Equatable {
 enum WorkshopError: LocalizedError, Equatable {
     case notACollectionLink
     case unreadable(UInt64, UInt32)
+    case unsuitable(UInt64, String)
 
     var errorDescription: String? {
         switch self {
@@ -46,6 +47,8 @@ enum WorkshopError: LocalizedError, Equatable {
             return "That is not a Steam Workshop link or item number."
         case .unreadable(let id, let result):
             return "Steam would not show Workshop item \(id) (result \(result)). A private or friends-only collection may not be readable; make it public or unlisted."
+        case .unsuitable(let id, let reason):
+            return "Workshop item \(id) cannot be synced: \(reason)."
         }
     }
 }
@@ -158,6 +161,10 @@ enum SteamWorkshop {
         var requiredBy: [UInt64: UInt64] = [:]
         /// Items left out, with the reason, for the user to see.
         var skipped: [UInt64: String] = [:]
+        /// Every item the collection still lists or requires, skipped ones
+        /// included: a recorded mod that is listed but momentarily skipped
+        /// (unreadable, made private, banned) is kept, not removed.
+        var listed: Set<UInt64> = []
     }
 
     /// Walks a collection: nested collections are expanded, each mod's required
@@ -184,6 +191,11 @@ enum SteamWorkshop {
         guard let root = known[rootID], root.result == 1 else {
             throw WorkshopError.unreadable(rootID, known[rootID]?.result ?? 0)
         }
+        // A root that is not this game's collection or mod would resolve to
+        // nothing, and a sync would then remove everything it installed.
+        if root.banned { throw WorkshopError.unsuitable(rootID, "it is banned") }
+        guard root.isCollection || root.isMod else { throw WorkshopError.unsuitable(rootID, "it is not a collection or a mod") }
+        guard root.consumerAppID == appID else { throw WorkshopError.unsuitable(rootID, "it belongs to another game (app \(root.consumerAppID))") }
         var resolution = Resolution(collection: root)
         var visited: Set<UInt64> = []
         var level: [(id: UInt64, requiredBy: UInt64?)] = [(rootID, nil)]
@@ -194,6 +206,7 @@ enum SteamWorkshop {
                 // Listed by a collection after all: not merely required.
                 if entry.requiredBy == nil { resolution.requiredBy.removeValue(forKey: entry.id) }
                 guard visited.insert(entry.id).inserted else { continue }
+                resolution.listed.insert(entry.id)
                 guard let item = known[entry.id], item.result == 1 else {
                     resolution.skipped[entry.id] = "not available (result \(known[entry.id]?.result ?? 0))"
                     continue
