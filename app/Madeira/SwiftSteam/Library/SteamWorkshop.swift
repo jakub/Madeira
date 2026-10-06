@@ -165,6 +165,9 @@ enum SteamWorkshop {
         /// included: a recorded mod that is listed but momentarily skipped
         /// (unreadable, made private, banned) is kept, not removed.
         var listed: Set<UInt64> = []
+        /// Steam did not answer for some item (unreadable, private, not
+        /// returned): what hangs below it is unknown, so nothing is removed.
+        var incomplete = false
     }
 
     /// Walks a collection: nested collections are expanded, each mod's required
@@ -209,6 +212,7 @@ enum SteamWorkshop {
                 resolution.listed.insert(entry.id)
                 guard let item = known[entry.id], item.result == 1 else {
                     resolution.skipped[entry.id] = "not available (result \(known[entry.id]?.result ?? 0))"
+                    resolution.incomplete = true
                     continue
                 }
                 if item.banned { resolution.skipped[item.id] = "banned"; continue }

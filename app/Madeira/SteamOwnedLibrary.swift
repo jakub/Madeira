@@ -229,9 +229,15 @@ final class SteamOwnedLibrary: ObservableObject {
     private var timer: Timer?
     /// Games whose next download job verifies every installed file (Repair).
     private var repairs = Set<Int>()
-    /// Owned DLC depots Steam refused this app run, by App ID: not counted as
-    /// missing, so the update offer clears.
-    private var refusedDLC: [Int: Set<Int>] = [:]
+    /// Owned DLC depots Steam refused at the last install, by App ID (kept on
+    /// disk): not counted as missing, so the update offer clears.
+    private var refusedDLC: [Int: Set<Int>] = [:] {
+        didSet {
+            try? FileManager.default.createDirectory(at: Self.supportFolder, withIntermediateDirectories: true)
+            let stored = Dictionary(uniqueKeysWithValues: refusedDLC.map { (String($0.key), $0.value.sorted()) })
+            try? JSONEncoder().encode(stored).write(to: Self.refusedDLCURL, options: .atomic)
+        }
+    }
 
     /// A game's Steam Workshop collection as Madeira last read it.
     struct WorkshopStatus: Equatable {
@@ -267,6 +273,7 @@ final class SteamOwnedLibrary: ObservableObject {
     private static var cacheURL: URL { supportFolder.appendingPathComponent("steam-library.json") }
     private static var playtimeURL: URL { supportFolder.appendingPathComponent("steam-playtime.json") }
     private static var workshopCollectionsURL: URL { supportFolder.appendingPathComponent("workshop-collections.json") }
+    private static var refusedDLCURL: URL { supportFolder.appendingPathComponent("steam-refused-dlc.json") }
     private struct Cache: Codable { var version: Int; var updated: Date; var account: String; var games: [SteamOwnedGame] }
 
     // MARK: Lifecycle
@@ -281,6 +288,10 @@ final class SteamOwnedLibrary: ObservableObject {
         }
         SteamDownloadBackground.shared.attach(self)
         loadWorkshopCollections()
+        if let data = try? Data(contentsOf: Self.refusedDLCURL),
+           let stored = try? JSONDecoder().decode([String: [Int]].self, from: data) {
+            refusedDLC = Dictionary(uniqueKeysWithValues: stored.compactMap { key, value in Int(key).map { ($0, Set(value)) } })
+        }
         signedIn = SteamSignIn.isSignedIn
         if signedIn { loadCaches() }
         SteamLog.event("[steam-library] start signed-in=\(signedIn ? 1 : 0) cached=\(owned.count)")
@@ -1074,12 +1085,16 @@ final class SteamOwnedLibrary: ObservableObject {
     /// Madeira Dock's own), with its library entry (its per-game settings).
     func uninstall(_ game: DockGame) {
         guard SteamInstallPaths.isManaged(library: game.library), !inSession else { return }
+        // The running job (a game download or Workshop sync) must end before
+        // its files are deleted, or it could write some of them back.
+        let running = active?.id == game.id ? active?.task : nil
         pause(game.id); downloads[game.id] = nil
         LibraryModel.shared.removeSteam(appID: game.id)
         // A reinstall evaluates the game's one-time installs again.
         DockInstallers.setRunsNext(game.id, true, prefix: MadeiraDock.prefix)
         let apps = Self.steamApps, id = game.id, folder = game.installDir
         Task.detached(priority: .utility) {
+            await running?.value
             SteamInstallFiles.delete(appID: id, folderName: folder, steamApps: apps)
             await MainActor.run { SteamGamesModel.shared.refresh() }
         }
@@ -1192,34 +1207,51 @@ final class SteamOwnedLibrary: ObservableObject {
 
     /// Reads a game's collection and compares it with what is installed, so
     /// the game's page shows what a sync would change and Update offers it.
+    /// Only the fields a check owns are updated, in place, and only while the
+    /// game still syncs this collection; while its download job runs, the
+    /// record is mid-sync and no pending count is taken from it.
     func checkWorkshop(_ appID: Int) async {
         guard let collection = workshopCollections[appID], signedIn, !inSession else { return }
-        var status = workshop[appID] ?? WorkshopStatus()
-        status.checking = true
-        workshop[appID] = status
+        func update(_ change: (inout WorkshopStatus) -> Void) {
+            guard workshopCollections[appID] == collection else { return }
+            var status = workshop[appID] ?? WorkshopStatus()
+            change(&status)
+            workshop[appID] = status
+        }
+        update { $0.checking = true }
+        defer { update { $0.checking = false } }
         do {
             let resolution = try await resolveWorkshop(appID, collection: collection)
             let steamApps = Self.steamApps
             let record = WorkshopRecord.load(appID: UInt32(appID), steamApps: steamApps)
-            let installFolder = game(appID)?.folderName ?? "app_\(appID)"
+            let installFolder = workshopInstallFolder(appID)
             let plan = WorkshopInstall.plan(resolution, record: record, installFolder: installFolder) {
                 FileManager.default.fileExists(atPath: steamApps.appendingPathComponent($0).path)
             }
-            status.collectionTitle = resolution.collection.title
-            status.items = resolution.mods.count
-            status.pending = plan.install.count + plan.remove.count
-            status.skipped = Self.describeSkipped(resolution)
-            status.warnings = plan.conflicts.map { WorkshopInstall.conflictWarning($0, appID: UInt32(appID), installFolder: installFolder) }
-                + WorkshopInstall.recordedWarnings(record)
-            status.error = nil
-            SteamLog.event("[steam-workshop] check app=\(appID) mods=\(status.items) pending=\(status.pending) conflicts=\(plan.conflicts.count) skipped=\(status.skipped.count)")
+            let syncing = downloads[appID] != nil
+            update { status in
+                status.collectionTitle = resolution.collection.title
+                status.items = resolution.mods.count
+                if !syncing { status.pending = plan.install.count + plan.remove.count }
+                status.skipped = Self.describeSkipped(resolution)
+                status.warnings = plan.conflicts.map { WorkshopInstall.conflictWarning($0, appID: UInt32(appID), installFolder: installFolder) }
+                    + (plan.removalsDeferred ? ["Steam did not answer for every item in the collection, so nothing will be removed until it does"] : [])
+                    + WorkshopInstall.secondCopies(record, steamApps: steamApps)
+                status.error = nil
+            }
+            SteamLog.event("[steam-workshop] check app=\(appID) mods=\(resolution.mods.count) pending=\(plan.install.count + plan.remove.count) conflicts=\(plan.conflicts.count) skipped=\(resolution.skipped.count) deferred=\(plan.removalsDeferred ? 1 : 0)")
         } catch {
-            status.error = (error as? WorkshopError)?.errorDescription ?? SteamSignIn.message(error)
+            update { $0.error = (error as? WorkshopError)?.errorDescription ?? SteamSignIn.message(error) }
             SteamLog.event("[steam-workshop] check failed app=\(appID) reason=\(Self.reason(error))")
         }
-        status.checking = false
-        // The collection may have changed or been cleared meanwhile.
-        if workshopCollections[appID] == collection { workshop[appID] = status }
+    }
+
+    /// The game's install folder name, as installed (falling back to Steam's).
+    private func workshopInstallFolder(_ appID: Int) -> String {
+        if let installed = SteamGamesModel.shared.games.first(where: { $0.id == appID }) {
+            return SteamInstallFiles.safeFolderName(installed.installDir)
+        }
+        return game(appID)?.folderName ?? "app_\(appID)"
     }
 
     /// Every collection, for the installed games (after a library refresh).
@@ -1284,8 +1316,7 @@ final class SteamOwnedLibrary: ObservableObject {
                 status.items = resolution.mods.count
                 status.pending = 0
                 status.skipped = Self.describeSkipped(resolution)
-                status.warnings = result.warnings.filter { w in !WorkshopInstall.recordedWarnings(record).contains(w) }
-                    + WorkshopInstall.recordedWarnings(record)
+                status.warnings = result.warnings
                 status.error = nil
             }
             SteamLog.event("[steam-workshop] sync done app=\(appID) installed=\(result.installed) removed=\(result.removed) unchanged=\(result.unchanged) failed=\(result.failed) bytes=\(result.bytes) warnings=\(result.warnings.count)")

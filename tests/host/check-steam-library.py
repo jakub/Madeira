@@ -839,6 +839,11 @@ func packageBuffer(apps: [UInt32], depots: [UInt32]) -> Data {
     require(wsResolved.mods.map(\.id) == [1, 2, 10, 20, 21] && wsResolved.requiredBy == [20: 2, 21: 20], "a collection resolves nested collections and required items once each, cycles included")
     require(wsResolved.skipped.count == 4, "items for another game, banned, unreadable or not mods are left out with a reason")
     require(wsResolved.listed.isSuperset(of: [1, 2, 10, 20, 21, 3, 4, 5, 6]), "the walk lists every item reached, skipped ones included")
+    let wsNoNested = try await SteamWorkshop.resolve(collection: 100, appID: 294100) { batch in
+        try SteamWorkshop.parseDetails(wsResponse(batch.filter { $0 != 200 }.compactMap { wsWorld[$0] }))
+    }
+    require(wsNoNested.incomplete && !wsNoNested.mods.contains { $0.id == 10 }, "a nested collection Steam does not answer makes the answer incomplete")
+    require(wsResolved.incomplete, "an unreadable listed item also marks the answer incomplete")
     do { _ = try await SteamWorkshop.resolve(collection: 6, appID: 294100) { batch in try SteamWorkshop.parseDetails(wsResponse(batch.compactMap { wsWorld[$0] })) }; require(false, "a root that is not a collection or mod is refused") }
     catch let e as WorkshopError { if case .unsuitable = e { require(true, "a root that is not a collection or mod is refused") } else { require(false, "a root that is not a collection or mod is refused") } }
 
@@ -875,7 +880,7 @@ func packageBuffer(apps: [UInt32], depots: [UInt32]) -> Data {
     let wsR1 = try await WorkshopInstall.apply(wsPlan1, resolution: wsRes, record: &wsRec, installFolder: "RimWorld", steamApps: wsApps, download: wsDownload) { _, _, _ in }
     require(wsR1.installed == 2 && wsR1.failed == 1 && wsFM.fileExists(atPath: wsMods.appendingPathComponent("1/old.dll").path), "a failing item is reported and the others install")
     require(wsFM.fileExists(atPath: wsMods.appendingPathComponent("42/note.txt").path) && wsRec.items["42"] == nil, "a hand-made Mods/<id> is never replaced")
-    require(wsRec.items["1"]?.warning?.contains("Harmony") == true && WorkshopRecord.load(appID: 294100, steamApps: wsApps) == wsRec, "a second copy is recorded with the item; the record persists")
+    require(WorkshopInstall.secondCopies(wsRec, steamApps: wsApps).first?.contains("Mods/Harmony") == true && WorkshopRecord.load(appID: 294100, steamApps: wsApps) == wsRec, "a hand-installed second copy is reported; the record persists")
     wsFiles[1] = ["About/About.xml": "<packageId>brrainz.harmony</packageId>", "new.dll": "2"]
     wsRes.mods[0] = wsItem(1, 12)
     let wsPlan2 = WorkshopInstall.plan(wsRes, record: wsRec, installFolder: "RimWorld", folderExists: wsExists)
@@ -888,6 +893,18 @@ func packageBuffer(apps: [UInt32], depots: [UInt32]) -> Data {
     let wsPlan3 = WorkshopInstall.plan(wsDrop, record: wsRec, installFolder: "RimWorld", folderExists: wsExists)
     _ = try await WorkshopInstall.apply(wsPlan3, resolution: wsDrop, record: &wsRec, installFolder: "RimWorld", steamApps: wsApps, download: wsDownload) { _, _, _ in }
     require(!wsFM.fileExists(atPath: wsMods.appendingPathComponent("2").path) && wsFM.fileExists(atPath: wsMods.path) && wsRec.items.keys.sorted() == ["1"], "dropped items' own folders are removed; a tampered record path deletes nothing")
+    var wsPart = wsDrop; wsPart.incomplete = true
+    wsRec.items["7"] = WorkshopRecord.Entry(title: "seven", manifest: "70", timeUpdated: 0, folder: "common/RimWorld/Mods/7", requiredBy: nil, bytes: 0)
+    let wsPlan4 = WorkshopInstall.plan(wsPart, record: wsRec, installFolder: "RimWorld", folderExists: wsExists)
+    require(wsPlan4.remove.isEmpty && wsPlan4.removalsDeferred, "nothing is removed while Steam's answer is incomplete")
+    try wsFM.createDirectory(at: wsMods.appendingPathComponent("3"), withIntermediateDirectories: true)
+    wsRec.items["3"] = WorkshopRecord.Entry(title: "three", manifest: "0", timeUpdated: 0, folder: "common/RimWorld/Mods/3", requiredBy: nil, bytes: 0)
+    var wsProv = wsDrop; wsProv.mods = [wsItem(1, 12), wsItem(3, 30)]; wsProv.listed = [1, 3]
+    let wsPlan5 = WorkshopInstall.plan(wsProv, record: wsRec, installFolder: "RimWorld", folderExists: wsExists)
+    require(wsPlan5.install.map(\.id) == [3] && wsPlan5.conflicts.isEmpty, "a provisionally recorded folder (the app died mid-swap) is reinstalled, not a conflict")
+    require(WorkshopInstall.plan(wsProv, record: wsRec, installFolder: "rimworld", folderExists: wsExists).conflicts.isEmpty, "a game folder whose name changed case is still Madeira's")
+    try wsFM.removeItem(at: wsMods.appendingPathComponent("Harmony"))
+    require(WorkshopInstall.secondCopies(wsRec, steamApps: wsApps).isEmpty, "the second-copy warning clears once that copy is deleted")
     try? wsFM.removeItem(at: wsRoot)
     let legacy = SteamAppInfo.parse(appID: 10, from: appVDF(#"""
     "common" { "name" "Old" "type" "Game" "oslist" "windows" } "config" { "installdir" "Old" }

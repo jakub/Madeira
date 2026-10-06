@@ -20,8 +20,6 @@ struct WorkshopRecord: Codable, Equatable {
         /// The mod that required it, when no collection lists it.
         var requiredBy: UInt64?
         var bytes: UInt64
-        /// A second copy of this mod found beside it when it was installed.
-        var warning: String?
     }
 
     var appID: UInt32
@@ -70,6 +68,9 @@ enum WorkshopInstall {
         /// Recorded items the collection no longer resolves to (item IDs).
         var remove: [String] = []
         var unchanged = 0
+        /// Items would be removed, but Steam did not answer for everything the
+        /// collection lists, so removals wait for a complete answer.
+        var removalsDeferred = false
         var isEmpty: Bool { install.isEmpty && remove.isEmpty }
     }
 
@@ -95,6 +96,10 @@ enum WorkshopInstall {
             }
         }
         plan.remove = record.items.keys.filter { !wanted.contains($0) }.sorted()
+        if resolution.incomplete, !plan.remove.isEmpty {
+            plan.removalsDeferred = true
+            plan.remove = []
+        }
         return plan
     }
 
@@ -103,7 +108,9 @@ enum WorkshopInstall {
     /// (which sits on the Wine drive, writable by the guest) merely claims.
     static func isExpected(_ entry: WorkshopRecord.Entry, itemID: String, appID: UInt32, installFolder: String) -> Bool {
         guard let id = UInt64(itemID) else { return false }
-        return entry.folder == folder(itemID: id, appID: appID, installFolder: installFolder)
+        // Case-insensitively, as the file system compares: a game folder whose
+        // installdir changes case is still the same folder.
+        return entry.folder.caseInsensitiveCompare(folder(itemID: id, appID: appID, installFolder: installFolder)) == .orderedSame
     }
 
     /// The `<packageId>` an About/About.xml declares, lower-cased as RimWorld
@@ -150,9 +157,37 @@ enum WorkshopInstall {
         "\(item.title): \(folder(itemID: item.id, appID: appID, installFolder: installFolder)) already exists and was not installed by Madeira; it was left alone"
     }
 
-    /// The warnings the record keeps (second copies), for the game's page.
-    static func recordedWarnings(_ record: WorkshopRecord) -> [String] {
-        record.items.keys.sorted().compactMap { record.items[$0]?.warning }
+    /// "<title>: also installed by hand in Mods/<folder>; remove that copy"
+    /// for every recorded mod that another folder beside it declares too (same
+    /// packageId), read from disk now: each folder holding recorded items is
+    /// scanned once.
+    static func secondCopies(_ record: WorkshopRecord, steamApps: URL) -> [String] {
+        let fm = FileManager.default
+        let managed = Set(record.items.values.map { $0.folder.lowercased() })
+        var byParent: [String: [(id: String, entry: WorkshopRecord.Entry)]] = [:]
+        for (id, entry) in record.items {
+            let parent = (entry.folder as NSString).deletingLastPathComponent
+            byParent[parent, default: []].append((id, entry))
+        }
+        var warnings: [String] = []
+        for (parent, entries) in byParent.sorted(by: { $0.key < $1.key }) {
+            let dir = steamApps.appendingPathComponent(parent, isDirectory: true)
+            var others: [String: [String]] = [:]   // packageId -> unmanaged folder names
+            for name in ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? []).sorted()
+            where !managed.contains("\(parent)/\(name)".lowercased()) {
+                if let id = packageID(inModFolder: dir.appendingPathComponent(name, isDirectory: true)) {
+                    others[id, default: []].append(name)
+                }
+            }
+            guard !others.isEmpty else { continue }
+            for (_, entry) in entries.sorted(by: { $0.id < $1.id }) {
+                guard let id = packageID(inModFolder: steamApps.appendingPathComponent(entry.folder, isDirectory: true)),
+                      let copies = others[id] else { continue }
+                let where_ = copies.map { "\((parent as NSString).lastPathComponent)/\($0)" }.joined(separator: ", ")
+                warnings.append("\(entry.title): also installed by hand in \(where_); remove that copy")
+            }
+        }
+        return warnings
     }
 
     /// Applies a plan: each item is downloaded to its staging folder by
@@ -187,35 +222,43 @@ enum WorkshopInstall {
                 result.warnings.append(conflictWarning(item, appID: record.appID, installFolder: installFolder))
                 continue
             }
-            let staged: (folder: URL, bytes: UInt64)
             do {
-                staged = try await download(item)
+                let staged = try await download(item)
+                let work = staged.folder.deletingLastPathComponent()
+                // The content is complete: its journal must not outlive it, or a
+                // later download would trust chunks that are no longer on disk.
+                try? fm.removeItem(at: work.appendingPathComponent("journal", isDirectory: true))
+                // Claimed in the record before the swap: if the app dies in
+                // between, the next sync finds its own (provisional) folder and
+                // installs it again, instead of a folder it must not touch.
+                record.items[id] = WorkshopRecord.Entry(title: item.title, manifest: "0", timeUpdated: 0, folder: relative,
+                                                        requiredBy: resolution.requiredBy[item.id], bytes: 0)
+                try record.save(steamApps: steamApps)
+                try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+                let aside = work.appendingPathComponent("previous", isDirectory: true)
+                try? fm.removeItem(at: aside)
+                if fm.fileExists(atPath: destination.path) { try fm.moveItem(at: destination, to: aside) }
+                do {
+                    try fm.moveItem(at: staged.folder, to: destination)
+                } catch {
+                    // Put the previous copy back rather than leave the mod missing.
+                    if fm.fileExists(atPath: aside.path), !fm.fileExists(atPath: destination.path) {
+                        try? fm.moveItem(at: aside, to: destination)
+                    }
+                    throw error
+                }
+                try? fm.removeItem(at: work)
+                record.items[id] = WorkshopRecord.Entry(
+                    title: item.title, manifest: String(item.manifestID), timeUpdated: item.timeUpdated,
+                    folder: relative, requiredBy: resolution.requiredBy[item.id], bytes: staged.bytes)
+                try record.save(steamApps: steamApps)
+                result.installed += 1
+                result.bytes += staged.bytes
             } catch {
                 if error is CancellationError || Task.isCancelled { throw error }
                 result.failed += 1
                 result.warnings.append("\(item.title): not installed (\(error.localizedDescription))")
-                continue
             }
-            let work = staged.folder.deletingLastPathComponent()
-            // The content is complete: its journal must not outlive it, or a
-            // later download would trust chunks that are no longer on disk.
-            try? fm.removeItem(at: work.appendingPathComponent("journal", isDirectory: true))
-            try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let aside = work.appendingPathComponent("previous", isDirectory: true)
-            try? fm.removeItem(at: aside)
-            if fm.fileExists(atPath: destination.path) { try fm.moveItem(at: destination, to: aside) }
-            try fm.moveItem(at: staged.folder, to: destination)
-            try? fm.removeItem(at: work)
-            let managed = Set(record.items.values.map(\.folder)).union([relative])
-            let copies = duplicates(of: destination, managed: managed, steamApps: steamApps)
-            let warning = copies.isEmpty ? nil
-                : "\(item.title): also installed by hand in \(copies.map { "\(destination.deletingLastPathComponent().lastPathComponent)/\($0)" }.joined(separator: ", ")); remove that copy"
-            record.items[id] = WorkshopRecord.Entry(
-                title: item.title, manifest: String(item.manifestID), timeUpdated: item.timeUpdated,
-                folder: relative, requiredBy: resolution.requiredBy[item.id], bytes: staged.bytes, warning: warning)
-            try record.save(steamApps: steamApps)
-            result.installed += 1
-            result.bytes += staged.bytes
         }
 
         for id in plan.remove {
@@ -231,6 +274,10 @@ enum WorkshopInstall {
             try record.save(steamApps: steamApps)
             result.removed += 1
         }
+        if plan.removalsDeferred {
+            result.warnings.append("Steam did not answer for every item in the collection, so no mods were removed this time")
+        }
+        result.warnings += secondCopies(record, steamApps: steamApps)
         try record.save(steamApps: steamApps)
         progress(done, total, "")
         return result
