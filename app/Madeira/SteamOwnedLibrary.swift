@@ -260,6 +260,13 @@ final class SteamOwnedLibrary: ObservableObject {
     @Published private(set) var workshop: [Int: WorkshopStatus] = [:]
 
     var hasActiveDownload: Bool { downloads.values.contains { $0.state == .active || $0.state == .queued } }
+    /// Work that ending the process would cut short (LibraryModel's finished
+    /// session): a download running, queued or waiting to resume, or a cloud
+    /// save transfer. A download paused for a game session resumes in
+    /// `reconcileSession()`.
+    var holdsProcess: Bool {
+        hasActiveDownload || !resumeAfterSession.isEmpty || !resumeAfterBackgroundIDs.isEmpty || !cloudBusy.isEmpty
+    }
     func game(_ appID: Int) -> SteamOwnedGame? { owned.first { $0.id == appID } }
 
     // MARK: Files

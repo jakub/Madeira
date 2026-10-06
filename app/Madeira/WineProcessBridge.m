@@ -290,6 +290,7 @@ extern void wine_log_set_file(const char *path);
 
 static pthread_t g_wine_thread;
 static volatile int g_wine_running = 0;
+static volatile int g_wine_has_run = 0;
 
 /* Session exit report for the library front end. The app marks one process as
  * its own: the program it hands to __wine_main below, which is the session's
@@ -1809,12 +1810,17 @@ int wine_process_start(const char *prefix_path) {
     }
 
     pthread_detach(g_wine_thread);
+    g_wine_has_run = 1;
     LOG("Wine process thread created");
     return 0;
 }
 
 int wine_process_is_running(void) {
     return g_wine_running;
+}
+
+int wine_process_has_run(void) {
+    return g_wine_has_run;
 }
 
 int madeira_write_continue_flag(void) {
