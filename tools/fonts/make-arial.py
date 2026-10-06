@@ -10,6 +10,12 @@ The OFL forbids a modified version from using the Reserved Font Name "Liberation
 every name record that carries it is rewritten; the copyright, trademark and license
 records are kept.
 
+Proton does the same for the same reason (Makefile.in, arial_NAMES/arial_ORIG).
+
+Input: the unmodified Liberation Fonts 2.1.5 release,
+  https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz
+  SHA-256 7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0
+
 Usage: make-arial.py <dir with LiberationSans-*.ttf> <output dir>
 Needs fontTools (pip install fonttools).
 """
