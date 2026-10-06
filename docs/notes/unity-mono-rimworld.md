@@ -82,7 +82,7 @@ xcrun devicectl device install app --device 00008142-001609303E2B401C <DerivedDa
   - real thread suspension
   - OutputDebugString
   - any single server wait longer than 3 s
-- **Diagnostic patch:** `build/wineserver/fd_ios.c` runs the ml585 stuck-wait report when `MADEIRA_STUCK_WAIT_SECS` is set, not only in desktop mode.
+- **Diagnostic patch (since reverted):** `build/wineserver/fd_ios.c` ran the ml585 stuck-wait report when `MADEIRA_STUCK_WAIT_SECS` was set, not only in desktop mode.
 - **Symbols:** Unity publishes PDBs at `https://symbolserver.unity3d.com/<pdb>/<GUID><age>/<pdb-without-b>_` (a CAB file; unpack with cabextract). Put the PDB next to UnityPlayer.dll and llvm-symbolizer finds it.
 
 ## RimWorld loading hang: root cause and FEX fix (2026-10-05, untested on device)
@@ -105,14 +105,12 @@ xcrun devicectl device install app --device 00008142-001609303E2B401C <DerivedDa
   - Disabling find_package is required: otherwise Homebrew's `fmt` leaks into the mingw build.
   - Result: the unmodified rebuild matches the shipped `.rdata` exactly, but `.text` is about 24 KB smaller. The codegen flags (likely CPU tuning) are unknown. If behaviour diverges beyond the fix, test the unpatched rebuild as the control.
 
-## Local diagnostics currently in the tree (strip all of these for a clean build)
-- **dxmt `src/winemetal/unix/winemetal_unix.c`:** the A8 trace patch (`text-analyst/a8-trace.patch`).
-  - It is ON by default; `MADEIRA_A8_TRACE=0` disables it.
-  - It does a blocking `waitUntilCompleted` readback at +6 and +300 presents.
-  - Revert it with `git -C dxmt checkout src/winemetal/unix/winemetal_unix.c`.
-- **`app/Madeira/Info.plist`:** `MetalCaptureEnabled = YES`, for the GPU frame capture.
-- **`build/wineserver/fd_ios.c`:** the stuck-wait report, gated on `MADEIRA_STUCK_WAIT_SECS` (`patches/*fd_ios-stuck-wait-diag.patch`).
-- **`madeira.cfg` on the device:** `env.MADEIRA_STUCK_WAIT_SECS = 3`. Experiment keys are added and removed per run; the cfg always keeps the user's `env.MADEIRA_JIT_SHORTCUT = 1`.
+## Diagnostics used during the investigation (all reverted)
+- **dxmt `src/winemetal/unix/winemetal_unix.c`:** the A8 trace (texture creation, uploads, readback). Added in dxmt `95ad350`, reverted in `b50ccae`.
+- **`app/Madeira/Info.plist`:** `MetalCaptureEnabled = YES`, for the GPU frame capture. Added in `86d5965`, reverted in `73e6849`.
+- **`build/wineserver/fd_ios.c`:** the stuck-wait report outside desktop mode, gated on `MADEIRA_STUCK_WAIT_SECS`. Added in `2fe4ec2`, reverted in `04598d2`.
+- **On the device:** the TextProbe mod, an `ft-test` library entry, and `madeira.cfg` keys (`MADEIRA_STUCK_WAIT_SECS`, `DXMT_DISPLAY_MODE_STATS`). These are removed as part of the clean-up.
+- **Kept as tools:** `tools/textprobe` (the RimWorld probe mod) and `tools/ft-test`.
 - **Keep, these are the fixes:**
   - wine `heap.c` and `virtual_ios.c` VPROT_HEAP (exec-heap classification)
   - FEX `WriteUntrackedLocked` (backpatcher deadlock)
@@ -122,7 +120,7 @@ xcrun devicectl device install app --device 00008142-001609303E2B401C <DerivedDa
 ## Text bug findings so far (RimWorld renders no text; everything else draws)
 - **Not DXMT or Metal.** A8 uploads read back byte-identical; Metal validation is clean. The GPU frame capture shows 3 pipelines, 35 draws, no text pipeline, and no font atlas bound.
 - **Unity never issues text draws.** Only ONE glyph is rasterised all session: an 8x11 bitmap into a dynamic font atlas.
-- **Not OS fonts.** resources.assets embeds 3 TrueType fonts (MS Arial at 0x51834c, Calibri with EBDT bitmaps at 0x62cd8c, a FontForge face at 0x5d7420). The prefix's FontSubstitutes maps Arial to Wine's Tahoma, which has glyf outlines.
+- **Not OS fonts (WRONG, see below).** resources.assets embeds 3 TrueType fonts (MS Arial at 0x51834c, Calibri with EBDT bitmaps at 0x62cd8c, a FontForge face at 0x5d7420). The prefix's FontSubstitutes maps Arial to Wine's Tahoma, which has glyf outlines.
 - **Not the FEX Mono backpatcher.** Verified: with FEX_MONOHACKS=0, `[mono-cfg] MonoHacks=0` and text is still missing.
 - **FEX_MULTIBLOCK=0 and HostFeatures=disableavx:** both negative on screen, but the effective values were NOT yet confirmed in the logs.
 - **Current hypothesis:** FreeType's outline rasterisation fails under FEX/ARM64EC, possibly setjmp/longjmp or SEH unwinding. Embedded bitmap strikes still work.
@@ -143,3 +141,15 @@ xcrun devicectl device install app --device 00008142-001609303E2B401C <DerivedDa
   - (b) A user-supplied Arial.
   - (c) Madeira copying the game's own embedded Arial when one exists.
 - **The probe mod is still installed and enabled.** It lives in `RimWorld/Mods/TextProbe` with `local.textprobe` in ModsConfig.xml, and changes nothing in-game. The original ModsConfig is backed up at `scratchpad/textprobe/ModsConfig.backup.xml`.
+
+## Durable font fix (shipped 2026-10-05)
+- **How Unity looks fonts up, from the disassembly.** This was read from UnityPlayer.dll 2022.3 with its public PDB.
+  - `DynamicFontMap::StaticInitialize` scans `GetWindowsDirectory()\Fonts` once.
+  - It keys each scalable face by its FreeType family name, matched exactly and case-sensitively, together with its bold and italic bits.
+  - It never reads file names or the registry, and it skips files it cannot open.
+  - So option (a) above cannot work: a Liberation file stays "Liberation Sans" whatever it is named or registered as.
+- **Why the first Liberation test seemed to work.** Unproven. The likeliest explanation is that the copy had not landed and the MS Arial was still in place.
+- **What ships.** Liberation Sans 2.1.5 with its family renamed to "Arial" (`tools/fonts/make-arial.py`, as Proton does).
+  - The bundle carries it in `arial-fonts/`. It is not called `fonts/`, because Wine loads `<bundle>/fonts` as its data-dir font folder.
+  - `madeira_ensure_arial_fonts` copies `arial.ttf`, `arialbd.ttf`, `ariali.ttf` and `arialbi.ttf` into the prefix when they are missing or empty.
+  - Verified on the device: 'N' advance=10, CalcSize("New colony") = 73x22, and the files are restored after being emptied.

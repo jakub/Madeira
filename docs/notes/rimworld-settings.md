@@ -29,7 +29,7 @@ RimWorld's main UI fonts are Unity dynamic fonts without embedded data. `Arial_s
 
 So the font's internal family name has to be "Arial". Copying Liberation Sans in as `arial.ttf` is not enough, because its family name stays "Liberation Sans". Registering it in the registry does not help either.
 
-**What Madeira ships.** Liberation Sans 2.1.5 (SIL OFL 1.1, metric-compatible with Arial), with the family renamed to "Arial" by `tools/fonts/make-arial.py`. This is also what Proton does. Madeira copies `arial.ttf`, `arialbd.ttf`, `ariali.ttf` and `arialbi.ttf` into `C:\windows\Fonts` whenever one of them is missing or empty, and never replaces an Arial that you installed. The bundle folder is called `arial-fonts` and not `fonts`, because Wine loads `<bundle>/fonts` as its own data-dir font folder.
+**What Madeira ships.** Liberation Sans 2.1.5 (SIL OFL 1.1, metric-compatible with Arial), with the family renamed to "Arial" by `tools/fonts/make-arial.py`. Proton does the same (`Makefile.in` in Proton 10.0, `arial_NAMES`/`arial_ORIG`). Madeira copies `arial.ttf`, `arialbd.ttf`, `ariali.ttf` and `arialbi.ttf` into `C:\windows\Fonts` whenever one of them is missing or empty, and never replaces an Arial that you installed. The bundle folder is called `arial-fonts` and not `fonts`, because Wine loads `<bundle>/fonts` as its own data-dir font folder.
 
 **Fixing a prefix by hand.** You need a font whose family name is "Arial" placed in `Documents/wine/drive_c/windows/Fonts/`. The file name and the registry do not matter. Either:
 
@@ -70,5 +70,5 @@ The cursor that Madeira draws over the game, and absolute trackpad moves, used t
 
 ## 6. Not needed
 
-- `madeira.cfg` keys: none are required. The diagnostic keys used during the investigation (`env.MADEIRA_STUCK_WAIT_SECS`, `metal-validation`, `env.FEX_*` experiments) are optional.
+- `madeira.cfg` keys: none are required. The diagnostics used during the investigation have been removed from the build (see `unity-mono-rimworld.md`).
 - Mods: the `tools/textprobe` diagnostic mod is optional and changes nothing.
