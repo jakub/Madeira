@@ -1889,6 +1889,8 @@ final class PointerFallback: NSObject {
 /// exactly, so one guest pixel is bounds/guest points on each axis. Main thread.
 final class DirectCursorOverlay {
     static let shared = DirectCursorOverlay()
+    /// The smallest on-screen size of one cursor image pixel, in points.
+    static let minPointsPerCursorPixel: CGFloat = 1
 
     private var layer: CALayer?
     private var image = winios_direct_cursor_state()
@@ -1929,12 +1931,18 @@ final class DirectCursorOverlay {
             let host = MetalHostView.shared.bounds
             let kx = host.width / CGFloat(max(gw, 1))
             let ky = host.height / CGFloat(max(gh, 1))
+            // The image itself is drawn at least one point per cursor pixel: at
+            // a high guest resolution (2816x1940 on an iPad) guest pixels are
+            // half a point, and a Windows cursor at that size is hard to find.
+            // The hotspot is scaled with the image, so its pixel stays on the
+            // cursor's position.
+            let cs = max(min(kx, ky), Self.minPointsPerCursorPixel)
             let w = serial != 0 ? Int(image.w) : Self.arrowSize.w
             let h = serial != 0 ? Int(image.h) : Self.arrowSize.h
             let hx = serial != 0 ? Int(image.hot_x) : 0
             let hy = serial != 0 ? Int(image.hot_y) : 0
-            l.bounds = CGRect(x: 0, y: 0, width: CGFloat(w) * kx, height: CGFloat(h) * ky)
-            l.position = CGPoint(x: CGFloat(Int(x) - hx) * kx, y: CGFloat(Int(y) - hy) * ky)
+            l.bounds = CGRect(x: 0, y: 0, width: CGFloat(w) * cs, height: CGFloat(h) * cs)
+            l.position = CGPoint(x: CGFloat(x) * kx - CGFloat(hx) * cs, y: CGFloat(y) * ky - CGFloat(hy) * cs)
         }
         CATransaction.commit()
     }
