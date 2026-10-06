@@ -63,6 +63,13 @@ DXMT now reports user32's monitor by default (`DXMT_WSI_MONITOR_IDENTITY`; set `
 
 The cursor that Madeira draws over the game, and absolute trackpad moves, used to assume a 1024x768 guest. At 1048x720 that put the arrow up to about 2% below and to the right of the point the game hit-tests. Both now use the live guest size, so the highlighted control and the arrow tip agree.
 
+## 4a. iPad system UI and the trackpad
+
+- **Run Madeira full screen.** Choose Settings → Multitasking & Gestures → Full Screen Apps. A windowed app keeps the status bar, and iPadOS refuses pointer lock to it.
+- **What Madeira does while a game runs.** It hides the status bar, gives the first swipe from any edge to the game (a second swipe reaches iOS), and fades the home indicator. iPadOS does not let an app remove the home indicator outright. These preferences come from Madeira's overlay windows as well as the app window, because UIKit reads them from the topmost full-screen window.
+- **Lock the pointer with Ctrl+Option+P** (Ctrl+Alt+P), or with the lock button. This is needed for a trackpad or mouse. While locked, the iPad pointer is hidden and cannot reach the screen edges, so the Dock and Control Center stay away. RimWorld draws its own cursor, so Madeira does not lock the pointer by itself. The log line `[hwinput] pointer lock granted=yes/no` shows whether iPadOS accepted the lock.
+- **Pointer speed while locked.** One unit of trackpad movement moves the cursor one screen point, at any resolution. iPadOS pointer acceleration is not applied. Raise Mouse sensitivity in the pointer panel to taste.
+
 ## 5. Known issues
 
 - **The Options resolution list is empty.** This is expected. Unity offers RimWorld the virtual monitor's modes: 640x480, 800x600 and 1048x720 (logged by `tools/textprobe`). RimWorld's Options menu lists only modes of at least 1024x768, so it shows none of them. Screen shape is 720 lines tall on purpose. Choose the size in Madeira and set it in `Prefs.xml` (section 3). If you want the menu to list modes, a Madeira Resolution of at least 768 lines does that (for example 1280x960), but on an iPad it is letterboxed.
