@@ -799,6 +799,12 @@ func packageBuffer(apps: [UInt32], depots: [UInt32]) -> Data {
     require(info.installDepots(ownedDepots: [999, 103]).map(\.depotID) == [101, 102, 105], "DLC is owned by depot, and ownership does not lift the other rules")
     require(info.ownedDLCDepots([107, 101]) == [107] && info.ownedDLCDepots([]).isEmpty, "ownedDLCDepots lists owned DLC depots only")
     require(info.depotSelectionSummary(ownedDepots: [107]).contains("107[-]sel"), "the selection log shows an owned DLC depot as selected")
+    let dlcArch = SteamAppInfo.parse(appID: 30, from: appVDF(#"""
+    "common" { "name" "D" "type" "game" "oslist" "windows" } "config" { "installdir" "D" }
+    "depots" { "301" { "manifests" { "public" { "gid" "3001" } } } "302" { "dlcappid" "39" "config" { "osarch" "32" } "manifests" { "public" { "gid" "3002" } } } "303" { "dlcappid" "39" "config" { "osarch" "64" } "manifests" { "public" { "gid" "3003" } } } }
+    """#))!
+    require(dlcArch.installDepots(ownedDepots: [302, 303]).map(\.depotID) == [301, 303], "an owned DLC takes its 64-bit depot")
+    require(dlcArch.depotSelectionSummary(ownedDepots: [302, 303]).contains("302[32]arch") && dlcArch.depotSelectionSummary().contains("302[32]dlc"), "the log blames an owned DLC depot's architecture, an unowned one's ownership")
     let legacy = SteamAppInfo.parse(appID: 10, from: appVDF(#"""
     "common" { "name" "Old" "type" "Game" "oslist" "windows" } "config" { "installdir" "Old" }
     "depots" { "201" { "config" { "oslist" "windows" "osarch" "32" } "manifests" { "public" "2001" } } "202" { "manifests" { "public" "2002" } } }

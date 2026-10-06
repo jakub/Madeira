@@ -185,17 +185,20 @@ struct SteamAppInfo {
                                limit: Int = 24) -> String {
         let chosen = Set(installDepots(os: os, arch: arch, language: language, ownedDepots: ownedDepots).map(\.depotID))
         return depots.sorted { $0.depotID < $1.depotID }.prefix(limit).map { d in
-            let why = selectionRule(d, chosen: chosen, os: os, language: language)
+            let why = selectionRule(d, chosen: chosen, os: os, language: language, ownedDepots: ownedDepots)
             let from = d.fromApp.map { "<\($0)" } ?? ""
             return "\(d.depotID)[\(d.osarch.isEmpty ? "-" : d.osarch)]\(why)\(from)"
         }.joined(separator: ",")
     }
 
     /// "sel" or the first rule that left the depot out.
-    private func selectionRule(_ d: DepotInfo, chosen: Set<UInt32>, os: String, language: String) -> String {
+    private func selectionRule(_ d: DepotInfo, chosen: Set<UInt32>, os: String, language: String,
+                               ownedDepots: Set<UInt32>?) -> String {
         if chosen.contains(d.depotID) { return "sel" }
         if !d.supports(os: os) { return "os" }
-        if d.dlcAppID != nil { return "dlc" }
+        // "dlc": a DLC depot the account does not own; an owned one falls
+        // through to the rule that did leave it out (usually "arch").
+        if d.dlcAppID != nil, ownedDepots?.contains(d.depotID) != true { return "dlc" }
         if d.isSharedInstall { return "shared" }
         if d.publicManifestID == nil { return "nomanifest" }
         if d.lowViolence { return "lowviolence" }
