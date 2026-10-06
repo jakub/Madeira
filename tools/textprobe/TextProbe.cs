@@ -82,6 +82,13 @@ namespace TextProbe
                 L("GUI.skin.font=" + (GUI.skin != null && GUI.skin.font != null ? GUI.skin.font.name : "<null>"));
             });
 
+            Try("resolutions", () =>
+            {
+                var rs = Screen.resolutions;
+                L("Screen.resolutions=" + rs.Length + " current=" + Screen.currentResolution + " screen=" + Screen.width + "x" + Screen.height + " mode=" + Screen.fullScreenMode);
+                foreach (var r in rs) L("  resolution " + r);
+            });
+
             Try("mouseprobe", () =>
             {
                 var go = new GameObject("TextProbe.MouseProbe");

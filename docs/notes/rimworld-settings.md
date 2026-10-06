@@ -54,26 +54,21 @@ Unity's own copies of these values are in `user.reg` under `[Software\\Ludeon St
 
 Close Madeira before you edit either file.
 
-## 4. Display mode list (madeira.cfg)
+## 4. Display mode list
 
-By default, DXMT gives its DXGI output a synthetic `HMONITOR` (1) instead of user32's monitor handle. Unity's `WinScreenSetup::GetResolutions` compares `DXGI_OUTPUT_DESC.Monitor` with `MonitorFromWindow()`, finds no match, and gets an empty mode list. `Player.log` then shows `Failed to find a valid fullscreen resolution`, and Unity falls back to a decorated window, whose title bar shifts every tap.
+Madeira handles this by default now. DXMT used to give its DXGI output a synthetic `HMONITOR` (1) instead of user32's monitor handle. Unity's `WinScreenSetup::GetResolutions` compares `DXGI_OUTPUT_DESC.Monitor` with `MonitorFromWindow()`. It found no match, got an empty mode list (`Failed to find a valid fullscreen resolution` in `Player.log`), and fell back to a decorated window, whose title bar shifted every tap.
 
-Add this line to `Documents/madeira.cfg`:
+DXMT now reports user32's monitor by default (`DXMT_WSI_MONITOR_IDENTITY`; set `env.DXMT_WSI_MONITOR_IDENTITY = 0` in `madeira.cfg` to go back to the sentinel). Unity then gets the three virtual-monitor modes and starts borderless at 1048x720. The log shows `[dxgi-modes] … count=3` and no fallback line.
 
-```
-env.DXMT_WSI_MONITOR_IDENTITY = 1
-```
-
-With it, Unity gets the three virtual-monitor modes and starts borderless at 1048x720 (`[dxgi-modes] … count=3` in the log, and no fallback line).
+The cursor that Madeira draws over the game, and absolute trackpad moves, used to assume a 1024x768 guest. At 1048x720 that put the arrow up to about 2% below and to the right of the point the game hit-tests. Both now use the live guest size, so the highlighted control and the arrow tip agree.
 
 ## 5. Known issues
 
-- **Taps land a few pixels low.** This is with `DXMT_WSI_MONITOR_IDENTITY=1` (section 4). Most taps hit; a few land a couple of pixels below the target. A probe shows the game side is exact. The window is `WS_POPUP`, its client rect is the 1048x720 window rect at (0,0), and Unity's mouse point is the Win32 cursor ±1 px. So the leftover offset is in how Madeira maps a touch onto the cursor, or how it draws the cursor sprite. Clicks from a trackpad or mouse are accurate.
-- **The Options resolution list is empty.** RimWorld lists only modes of at least 1024x768. The Screen-shape modes are 720 lines tall, so none qualify. Set the size in `Prefs.xml` instead (section 3).
+- **The Options resolution list is empty.** This is expected. Unity offers RimWorld the virtual monitor's modes: 640x480, 800x600 and 1048x720 (logged by `tools/textprobe`). RimWorld's Options menu lists only modes of at least 1024x768, so it shows none of them. Screen shape is 720 lines tall on purpose. Choose the size in Madeira and set it in `Prefs.xml` (section 3). If you want the menu to list modes, a Madeira Resolution of at least 768 lines does that (for example 1280x960), but on an iPad it is letterboxed.
 - **"BAD POOL — exiting now".** Now and then the JIT pool cannot be placed when Madeira starts (no address hole fits). It does not depend on the game. Relaunch Madeira.
 - **First start is slow.** Mono's call-site patching and DXMT shader compilation make the first start slow. Later starts are faster.
 
 ## 6. Not needed
 
-- Other `madeira.cfg` keys: none are required beyond section 4. The diagnostic keys used during the investigation (`env.MADEIRA_STUCK_WAIT_SECS`, `metal-validation`, `env.FEX_*` experiments) are optional.
+- `madeira.cfg` keys: none are required. The diagnostic keys used during the investigation (`env.MADEIRA_STUCK_WAIT_SECS`, `metal-validation`, `env.FEX_*` experiments) are optional.
 - Mods: the `tools/textprobe` diagnostic mod is optional and changes nothing.
