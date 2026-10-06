@@ -1738,6 +1738,9 @@ static void *wine_process_thread(void *arg) {
         dprintf(STDERR_FILENO, "[WineProc] stopping wineserver...\n");
         wineserver_stop();
 
+        /* The host's name must outlive this thread, so it must not point at
+         * exe_path on this stack (env_ios.c, set_process_name). */
+        dprintf(STDERR_FILENO, "[WineProc] host progname=%s\n", getprogname());
         dprintf(STDERR_FILENO, "[WineProc] Wine process thread finished cleanly\n");
 
         // Steam S0: this thread's TEB was mirrored into pthread TSD slot
