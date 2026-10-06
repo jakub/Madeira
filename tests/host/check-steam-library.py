@@ -854,13 +854,19 @@ func packageBuffer(apps: [UInt32], depots: [UInt32]) -> Data {
     let wsApps = wsRoot.appendingPathComponent("steamapps")
     let wsMods = wsApps.appendingPathComponent("common/RimWorld/Mods")
     try wsFM.createDirectory(at: wsMods.appendingPathComponent("Harmony/About"), withIntermediateDirectories: true)
-    try "<packageId>brrainz.harmony</packageId>".write(to: wsMods.appendingPathComponent("Harmony/About/About.xml"), atomically: true, encoding: .utf8)
+    try "<ModMetaData><packageId>brrainz.harmony</packageId></ModMetaData>".write(to: wsMods.appendingPathComponent("Harmony/About/About.xml"), atomically: true, encoding: .utf8)
     try wsFM.createDirectory(at: wsMods.appendingPathComponent("42"), withIntermediateDirectories: true)
     try "mine".write(to: wsMods.appendingPathComponent("42/note.txt"), atomically: true, encoding: .utf8)
+    // A mod's About.xml lists its requirements' packageIds before its own.
+    func wsAbout(_ id: String) -> String {
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<ModMetaData>\n  <name>mod</name>\n  <modDependencies>\n    <li><packageId>Ludeon.RimWorld.Odyssey</packageId></li>\n  </modDependencies>\n  <!-- <packageId>commented.out</packageId> -->\n  <packageId>\(id)</packageId>\n</ModMetaData>\n"
+    }
+    require(WorkshopInstall.packageID(aboutXML: Data(wsAbout("Brrainz.Harmony").utf8)) == "brrainz.harmony", "a mod's own packageId is read, not a dependency's listed before it")
+    require(WorkshopInstall.packageID(aboutXML: Data("<ModMetaData><modDependencies><li><packageId>brrainz.harmony</packageId></li></modDependencies></ModMetaData>".utf8)) == nil, "an About.xml declaring only dependencies has no packageId")
     func wsItem(_ id: UInt64, _ manifest: UInt64) -> WorkshopItem {
         var i = WorkshopItem(id: id); i.result = 1; i.consumerAppID = 294100; i.manifestID = manifest; i.title = "mod \(id)"; return i
     }
-    var wsFiles: [UInt64: [String: String]] = [1: ["About/About.xml": "<packageId>brrainz.harmony</packageId>", "old.dll": "1"], 2: ["a": "1"]]
+    var wsFiles: [UInt64: [String: String]] = [1: ["About/About.xml": wsAbout("brrainz.harmony"), "old.dll": "1"], 2: ["a": "1"]]
     let wsDownload: (WorkshopItem) async throws -> (folder: URL, bytes: UInt64) = { it in
         if it.id == 9 { throw SteamError.chunkDownloadFailed("refused") }
         let content = wsApps.appendingPathComponent("downloading/workshop/\(it.id)/content")
@@ -881,7 +887,7 @@ func packageBuffer(apps: [UInt32], depots: [UInt32]) -> Data {
     require(wsR1.installed == 2 && wsR1.failed == 1 && wsFM.fileExists(atPath: wsMods.appendingPathComponent("1/old.dll").path), "a failing item is reported and the others install")
     require(wsFM.fileExists(atPath: wsMods.appendingPathComponent("42/note.txt").path) && wsRec.items["42"] == nil, "a hand-made Mods/<id> is never replaced")
     require(WorkshopInstall.secondCopies(wsRec, steamApps: wsApps).first?.contains("Mods/Harmony") == true && WorkshopRecord.load(appID: 294100, steamApps: wsApps) == wsRec, "a hand-installed second copy is reported; the record persists")
-    wsFiles[1] = ["About/About.xml": "<packageId>brrainz.harmony</packageId>", "new.dll": "2"]
+    wsFiles[1] = ["About/About.xml": wsAbout("brrainz.harmony"), "new.dll": "2"]
     wsRes.mods[0] = wsItem(1, 12)
     let wsPlan2 = WorkshopInstall.plan(wsRes, record: wsRec, installFolder: "RimWorld", folderExists: wsExists)
     _ = try await WorkshopInstall.apply(wsPlan2, resolution: wsRes, record: &wsRec, installFolder: "RimWorld", steamApps: wsApps, download: wsDownload) { _, _, _ in }

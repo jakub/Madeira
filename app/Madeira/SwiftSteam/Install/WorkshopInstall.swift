@@ -3,6 +3,9 @@
 // Madeira Converter Exception: see LICENSE-EXCEPTION.md
 
 import Foundation
+#if canImport(FoundationXML)
+import FoundationXML
+#endif
 
 /// What Madeira installed from a game's Workshop collection, kept beside the
 /// game's install records as `steamapps/workshop/madeira_<appid>.json`. Folders
@@ -117,16 +120,49 @@ enum WorkshopInstall {
         return entry.folder.caseInsensitiveCompare(folder(itemID: id, appID: appID, installFolder: installFolder)) == .orderedSame
     }
 
-    /// The `<packageId>` an About/About.xml declares, lower-cased as RimWorld
-    /// compares it, or nil.
+    /// The `<packageId>` an About/About.xml declares for the mod itself (the
+    /// root element's own child, not one under modDependencies or loadAfter),
+    /// lower-cased as RimWorld compares it, or nil.
     static func packageID(inModFolder folder: URL) -> String? {
-        guard let data = try? Data(contentsOf: folder.appendingPathComponent("About/About.xml")),
-              let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1),
-              let open = text.range(of: "<packageId>", options: .caseInsensitive),
-              let close = text.range(of: "</packageId>", options: .caseInsensitive, range: open.upperBound..<text.endIndex)
-        else { return nil }
-        let id = text[open.upperBound..<close.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("About/About.xml")) else { return nil }
+        return packageID(aboutXML: data)
+    }
+
+    static func packageID(aboutXML data: Data) -> String? {
+        let reader = RootPackageID()
+        let parser = XMLParser(data: data)
+        parser.delegate = reader
+        parser.parse()
+        let id = reader.value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
         return id.isEmpty ? nil : id
+    }
+
+    /// Collects the text of the first `<packageId>` directly under the root
+    /// element, then stops.
+    private final class RootPackageID: NSObject, XMLParserDelegate {
+        var value: String?
+        private var depth = 0
+        private var text: String?
+
+        func parser(_ parser: XMLParser, didStartElement name: String, namespaceURI: String?,
+                    qualifiedName: String?, attributes: [String: String] = [:]) {
+            depth += 1
+            if depth == 2, name.caseInsensitiveCompare("packageId") == .orderedSame { text = "" }
+        }
+
+        func parser(_ parser: XMLParser, foundCharacters string: String) { text? += string }
+
+        func parser(_ parser: XMLParser, foundCDATA block: Data) {
+            if text != nil, let string = String(data: block, encoding: .utf8) { text? += string }
+        }
+
+        func parser(_ parser: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName: String?) {
+            if depth == 2, let found = text {
+                value = found
+                parser.abortParsing()
+            }
+            depth -= 1
+        }
     }
 
     /// Folders beside `installed` (not installed by Madeira) that declare the
