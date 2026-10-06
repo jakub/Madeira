@@ -833,7 +833,7 @@ enum JoystickPadHost {
             w.windowLevel = .normal + 100
             w.backgroundColor = .clear
             w.isHidden = false                 // never becomes key: see PassthroughWindow
-            let host = UIHostingController(rootView: JoystickPadOverlay())
+            let host = OverlayHostingController(rootView: JoystickPadOverlay())
             host.view.backgroundColor = .clear
             host.view.isUserInteractionEnabled = false
             w.rootViewController = host
@@ -848,6 +848,59 @@ enum JoystickPadHost {
 /// steal input from the game surface or the SwiftUI controls.
 final class PassthroughWindow: UIWindow {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? { nil }
+}
+
+/// The status bar, home indicator and edge-gesture preferences of a game
+/// session. UIKit reads them from the root controller of the topmost
+/// full-screen window, which during a game is one of Madeira's overlay windows
+/// (joystick pad, touch controls, the text keyboard), not the app window whose
+/// sessionBody asks for them in SwiftUI. So those roots answer from here.
+enum GameSessionChrome {
+    static var active = false {
+        didSet { if active != oldValue { refresh() } }
+    }
+
+    /// Re-ask every window's root controller, then log what iPadOS did.
+    static func refresh() {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        for vc in scenes.flatMap(\.windows).compactMap(\.rootViewController) {
+            vc.setNeedsStatusBarAppearanceUpdate()
+            vc.setNeedsUpdateOfHomeIndicatorAutoHidden()
+            vc.setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { log(scenes) }
+    }
+
+    /// "[chrome] ..." : whether iPadOS hid the status bar, the scene's size
+    /// against the screen's (a windowed scene can be smaller, and iPadOS
+    /// honours these preferences only full screen), and the window stack.
+    private static func log(_ scenes: [UIWindowScene]) {
+        for scene in scenes {
+            let hidden = scene.statusBarManager.map { $0.isStatusBarHidden ? "yes" : "no" } ?? "n/a"
+            let b = scene.coordinateSpace.bounds, screen = scene.screen.bounds
+            let windows = scene.windows.map { w in
+                "\(Int(w.windowLevel.rawValue)):\(type(of: w))\(w.isKeyWindow ? "*" : "")\(w.isHidden ? "-hidden" : "")"
+            }.joined(separator: ",")
+            fputs("[chrome] session=\(active ? "on" : "off") statusBarHidden=\(hidden) "
+                  + "scene=\(Int(b.width))x\(Int(b.height)) screen=\(Int(screen.width))x\(Int(screen.height)) "
+                  + "windows=[\(windows)]\n", stderr)
+        }
+    }
+}
+
+/// Root controller of an overlay window: hosts its SwiftUI content and gives
+/// the game session's system-chrome preferences (GameSessionChrome).
+final class OverlayHostingController<Content: View>: UIHostingController<Content> {
+    override var prefersStatusBarHidden: Bool { GameSessionChrome.active }
+    override var prefersHomeIndicatorAutoHidden: Bool { GameSessionChrome.active }
+    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { GameSessionChrome.active ? .all : [] }
+}
+
+/// The same, for an overlay window without SwiftUI content.
+final class OverlayController: UIViewController {
+    override var prefersStatusBarHidden: Bool { GameSessionChrome.active }
+    override var prefersHomeIndicatorAutoHidden: Bool { GameSessionChrome.active }
+    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { GameSessionChrome.active ? .all : [] }
 }
 
 /// The expanded pad, drawn in window space at the button's location.
@@ -1418,6 +1471,10 @@ struct ContentView: View {
         // only while the app runs full screen.
         .defersSystemGestures(on: .all)
         .persistentSystemOverlays(.hidden)
+        // The overlay windows above this one answer for the same preferences
+        // (OverlayHostingController) while a session is up.
+        .onAppear { GameSessionChrome.active = true }
+        .onDisappear { GameSessionChrome.active = false }
     }
 
     /// Portrait: classic tooling layout — header, badges, 240pt game strip,
@@ -3943,11 +4000,7 @@ enum TouchControlsHost {
             w.windowLevel = .normal + 101
             w.backgroundColor = .clear
             w.isHidden = false        // deliberately never made key
-            // The same system-gesture preferences as sessionBody: UIKit may ask
-            // this topmost window's controller instead of the app window's.
-            let host = UIHostingController(rootView: TouchControlsOverlay()
-                .defersSystemGestures(on: .all)
-                .persistentSystemOverlays(.hidden))
+            let host = OverlayHostingController(rootView: TouchControlsOverlay())
             host.view.backgroundColor = .clear
             w.rootViewController = host
             window = w

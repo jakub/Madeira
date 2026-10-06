@@ -4276,7 +4276,7 @@ enum LibraryKeyboard {
         previous = scene.windows.first(where: { $0.isKeyWindow })
         let w = LibraryKeyboardWindow(windowScene: scene)
         w.windowLevel = .normal + 102; w.backgroundColor = .clear
-        let controller = UIViewController(); controller.view.backgroundColor = .clear
+        let controller = OverlayController(); controller.view.backgroundColor = .clear
         w.rootViewController = controller
         let v = LibraryKeyInput(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
         controller.view.addSubview(v); input = v; window = w
