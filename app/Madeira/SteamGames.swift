@@ -359,6 +359,8 @@ enum SteamDirectStart {
     @Published private(set) var games: [DockGame] = []
     /// `buildid` of each install in Madeira's own library folder, by App ID.
     @Published private(set) var builds: [Int: Int] = [:]
+    /// The depot IDs each of those install records lists, by App ID.
+    @Published private(set) var depots: [Int: Set<Int>] = [:]
     private var scanning = false
     /// A refresh was asked for while a scan ran (an install record was just
     /// written): scan again once it ends.
@@ -374,18 +376,24 @@ enum SteamDirectStart {
         Task.detached(priority: .utility) {
             let found = MadeiraDock.games(drive: drive)
             var builds: [Int: Int] = [:]
+            var depots: [Int: Set<Int>] = [:]
             for game in found where SteamInstallPaths.isManaged(library: game.library) && game.installed {
-                if let build = SteamInstallFiles.buildID(appID: game.id, steamApps: SteamInstallPaths.steamApps(drive: drive)) {
+                let steamApps = SteamInstallPaths.steamApps(drive: drive)
+                if let build = SteamInstallFiles.buildID(appID: game.id, steamApps: steamApps) {
                     builds[game.id] = build
                 }
+                if let installed = SteamInstallFiles.installedDepots(appID: game.id, steamApps: steamApps) {
+                    depots[game.id] = installed
+                }
             }
-            let recorded = builds
+            let recorded = builds, recordedDepots = depots
             await MainActor.run {
                 self.scanning = false
                 let again = self.rescan
                 self.rescan = false
                 if self.games != found { self.games = found }
                 if self.builds != recorded { self.builds = recorded }
+                if self.depots != recordedDepots { self.depots = recordedDepots }
                 if found.count != self.lastCount {
                     self.lastCount = found.count
                     LogStore.shared.log("[steam-games] installed=\(found.count) ready=\(found.filter(\.installed).count)")
@@ -703,7 +711,7 @@ struct SteamGameCell: View {
     var body: some View {
         let download = steam.downloads[item.id]
         let status = SteamGamesRules.status(installed: item.installed, transfer: download?.transfer,
-                                            updateAvailable: steam.updateAvailable(appID: item.id, installedBuild: games.builds[item.id]))
+                                            updateAvailable: steam.updateAvailable(appID: item.id, installedBuild: games.builds[item.id], installedDepots: games.depots[item.id]))
         // An installed game's format (bits, graphics API, size) is kept on its library entry.
         let entry = library.entries.first { $0.steamAppID == item.id }
         let notDownloaded = item.installed?.installed != true && download == nil
@@ -1225,7 +1233,7 @@ struct SteamEntrySection: View {
                 case .active, .queued: Button("Pause update") { steam.pause(appID) }
                 case .paused, .failed: Button("Resume update") { steam.install(appID) }
                 }
-            } else if downloads, steam.updateAvailable(appID: appID, installedBuild: games.builds[appID]) {
+            } else if downloads, steam.updateAvailable(appID: appID, installedBuild: games.builds[appID], installedDepots: games.depots[appID]) {
                 Button { steam.install(appID) } label: { Label("Update available — download", systemImage: "arrow.down.circle") }
                     .disabled(!steam.signedIn)
             }

@@ -39,8 +39,12 @@ struct SteamOwnedGame: Codable, Identifiable, Hashable, Sendable {
     /// Steam's launch configuration, for "Start with: The game" (SteamDirectStart);
     /// nil in older caches, which then ask Steam once (SteamOwnedLibrary.launchOptions).
     var launches: [SteamLaunchOption]?
+    /// The DLC depots the account owns for this game (SteamAppInfo.ownedDLCDepots):
+    /// an install missing one of them has an update. nil in older caches or
+    /// when the licenses could not be read.
+    var dlcDepots: [Int]?
 
-    init(_ info: SteamAppInfo) {
+    init(_ info: SteamAppInfo, ownedDepots: Set<UInt32>? = nil) {
         id = Int(info.appID)
         name = info.name
         installDir = info.installDir
@@ -48,6 +52,7 @@ struct SteamOwnedGame: Codable, Identifiable, Hashable, Sendable {
         libraryCapsule = info.libraryCapsule; libraryHero = info.libraryHero; headerImage = info.headerImage
         parentID = info.parentID.map(Int.init)
         launches = info.launches
+        dlcDepots = ownedDepots.map { info.ownedDLCDepots($0).map(Int.init) }
     }
 
     var folderName: String { SteamInstallFiles.safeFolderName(installDir.isEmpty ? "app_\(id)" : installDir) }
@@ -311,7 +316,8 @@ final class SteamOwnedLibrary: ObservableObject {
         defer { refreshing = false }
         do {
             let apps = try await fetcher.fetchOwnedApps()
-            let games = apps.filter(\.installableOnWindows).map(SteamOwnedGame.init)
+            let ownedDepots = try? await fetcher.ownedDepotIDs()
+            let games = apps.filter(\.installableOnWindows).map { SteamOwnedGame($0, ownedDepots: ownedDepots) }
                 .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             owned = games
             libraryUpdated = Date()
@@ -959,10 +965,14 @@ final class SteamOwnedLibrary: ObservableObject {
 
     // MARK: Downloads
 
-    /// Whether Steam lists a newer build than the installed record.
-    func updateAvailable(appID: Int, installedBuild: Int?) -> Bool {
-        guard let installedBuild, let latest = game(appID)?.buildID, latest > 0 else { return false }
-        return latest > installedBuild
+    /// Whether Steam lists a newer build than the installed record, or the
+    /// account owns DLC whose depot the record does not list (installing it is
+    /// an update, as in Valve's client).
+    func updateAvailable(appID: Int, installedBuild: Int?, installedDepots: Set<Int>? = nil) -> Bool {
+        guard let installedBuild, let game = game(appID), game.buildID > 0 else { return false }
+        if game.buildID > installedBuild { return true }
+        guard let installedDepots, let dlc = game.dlcDepots else { return false }
+        return !Set(dlc).isSubset(of: installedDepots)
     }
 
     func hasPartialDownload(_ appID: Int) -> Bool {

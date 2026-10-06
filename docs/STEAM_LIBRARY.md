@@ -131,8 +131,13 @@ opens again when needed.
 account that owns the depot, so ownership is Steam's decision, not Madeira's.
 
 1. Product info of the app (and of the apps whose depots it shares) selects the
-   Windows, English, 64-bit (else 32-bit) depots, without DLC, redistributables
-   or regional alternates.
+   Windows, English, 64-bit (else 32-bit) depots, without redistributables or
+   regional alternates. DLC depots (`dlcappid`) are included when the account's
+   licenses list them, as Valve's client installs owned DLC with its game; a DLC
+   depot Steam does not serve (key or manifest refused) is left out and the
+   game installs without it. The install record lists each DLC depot with its
+   `dlcappid`, and an installed game missing an owned DLC depot is offered as an
+   update.
 2. For each depot: the depot key, the manifest request code, a per-server
    authorization token, then the manifest from a content server (a single-entry
    zip; older depots encrypt the manifest as a whole). File names in a manifest
@@ -412,9 +417,9 @@ Madeira Dock or as The game).
 
 ## Not included, and limits
 
-- No Steam Cloud, no achievements, no workshop content, no DLC installation,
-  no branch (beta) selection, no language selection: English, the public
-  branch.
+- No Steam Cloud, no achievements, no workshop content, no per-DLC choice
+  (every owned DLC installs), no branch (beta) selection, no language
+  selection: English, the public branch.
 - A file that a newer build no longer contains is not deleted by an update
   (the install keeps it); **Uninstall** removes the whole folder.
 - Only the account's licenses are read; family sharing and free-on-demand

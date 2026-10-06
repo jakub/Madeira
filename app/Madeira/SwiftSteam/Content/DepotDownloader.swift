@@ -79,10 +79,14 @@ final class DepotDownloader {
     func install(_ app: SteamAppInfo, steamApps: URL,
                  ownedDepots: @escaping () async -> Set<UInt32>? = { nil },
                  progress report: @escaping (SteamDownloadProgress) -> Void) async throws -> URL {
-        let depots = app.installDepots()
+        // The account's licensed depots: they choose which DLC depots to take,
+        // and tell a refused key for content the account does not own apart
+        // from a real failure. nil when they could not be read: no DLC then.
+        let owned = await ownedDepots()
+        let depots = app.installDepots(ownedDepots: owned)
         guard !depots.isEmpty else { throw SteamError.depotNotFound(app.appID) }
         // Before the key requests, so a refused depot still has its selection logged.
-        SteamLog.event("[steam-depot] selection app=\(app.appID) build=\(app.buildID) \(app.depotSelectionSummary())")
+        SteamLog.event("[steam-depot] selection app=\(app.appID) build=\(app.buildID) \(app.depotSelectionSummary(ownedDepots: owned))")
 
         let folderName = SteamInstallFiles.safeFolderName(app.installDir.isEmpty ? "app_\(app.appID)" : app.installDir)
         let installURL = steamApps.appendingPathComponent("common", isDirectory: true)
@@ -105,6 +109,9 @@ final class DepotDownloader {
         let pool = Array(hosts.prefix(hostPoolSize))
         var plans: [DepotPlan] = []
         var licenseSkipped: [UInt32] = []
+        // DLC is best effort: a DLC depot whose key or manifest Steam does not
+        // give is left out, and the game installs without it.
+        var dlcSkipped: [UInt32] = []
         // The logged-on account, for the install record. Read while the session
         // is connected: it idles out during a long download.
         var accountID: UInt64 = 0
@@ -115,11 +122,12 @@ final class DepotDownloader {
             do {
                 key = try await depotKey(depotID: depot.depotID, appID: app.appID)
             } catch SteamError.depotKeyNotFound(let refused) {
+                if depot.dlcAppID != nil { dlcSkipped.append(refused); continue }
                 // A depot Steam refuses AND the account's licenses do not
                 // include is content this account does not own (another
                 // edition, extra content): it is left out. Any other refusal
                 // still fails.
-                if let owned = await ownedDepots(), !owned.isEmpty, !owned.contains(refused) {
+                if let owned, !owned.isEmpty, !owned.contains(refused) {
                     licenseSkipped.append(refused)
                     continue
                 }
@@ -127,15 +135,27 @@ final class DepotDownloader {
             }
             if session.steamID != 0 { accountID = session.steamID }
             let contentAppID = !app.freeToDownload ? (depot.fromApp ?? app.appID) : app.appID
-            let manifest = try await fetchManifest(depotID: depot.depotID, appID: contentAppID,
+            let manifest: DepotManifest
+            do {
+                manifest = try await fetchManifest(depotID: depot.depotID, appID: contentAppID,
                                                    manifestGID: gid, key: key, hosts: hosts)
+            } catch where depot.dlcAppID != nil && !(error is CancellationError) {
+                SteamLog.event("[steam-depot] dlc depot=\(depot.depotID) manifest failed: \(error.localizedDescription)")
+                dlcSkipped.append(depot.depotID)
+                continue
+            }
             var auth: [String: String] = [:]
             for host in pool {
                 auth[host] = await cdnAuthFragment(depotID: depot.depotID, appID: contentAppID, host: host)
             }
             plans.append(DepotPlan(depotID: depot.depotID, manifestGID: gid, key: key, manifest: manifest,
                                    hosts: pool, auth: auth,
-                                   declaredSize: depot.publicSizeBytes, health: health))
+                                   declaredSize: depot.publicSizeBytes, health: health,
+                                   dlcAppID: depot.dlcAppID))
+        }
+        let dlcKept = plans.filter { $0.dlcAppID != nil }
+        if !dlcKept.isEmpty || !dlcSkipped.isEmpty {
+            SteamLog.event("[steam-depot] dlc app=\(app.appID) kept=\(dlcKept.map { "\($0.depotID)<\($0.dlcAppID ?? 0)" }.joined(separator: ",")) skipped=\(dlcSkipped.map(String.init).joined(separator: ","))")
         }
         if !licenseSkipped.isEmpty {
             SteamLog.event("[steam-depot] license app=\(app.appID) skipped=\(licenseSkipped.map(String.init).joined(separator: ",")) kept=\(plans.map { String($0.depotID) }.joined(separator: ","))")
@@ -208,7 +228,8 @@ final class DepotDownloader {
         report(state)
         let installed = plans.map { plan in
             AppManifestWriter.InstalledDepot(depotID: Int(plan.depotID), manifestGID: plan.manifestGID,
-                                             size: Int64(plan.manifest.totalUncompressedSize))
+                                             size: Int64(plan.manifest.totalUncompressedSize),
+                                             dlcAppID: plan.dlcAppID.map(Int.init))
         }
         // Depots taken from another app are that app's content. Valve's client
         // refuses a launch until the owner app has its own record, so both
@@ -270,6 +291,8 @@ final class DepotDownloader {
         let auth: [String: String]
         let declaredSize: UInt64
         let health: ContentHostHealth
+        /// The DLC app this depot delivers, recorded as the depot's `dlcappid`.
+        let dlcAppID: UInt32?
     }
 
     struct WorkItem: Sendable {

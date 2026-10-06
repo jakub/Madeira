@@ -37,6 +37,13 @@ enum SteamInstallFiles {
         return state["buildid"]?.string.flatMap { Int($0) }
     }
 
+    /// The depot IDs the install record lists under `InstalledDepots`, or nil
+    /// when there is no readable record.
+    static func installedDepots(appID: Int, steamApps: URL) -> Set<Int>? {
+        guard let state = record(appID: appID, steamApps: steamApps) else { return nil }
+        return Set((state["InstalledDepots"]?.fields ?? [:]).keys.compactMap { Int($0) })
+    }
+
     /// The install size the record states (`SizeOnDisk`, bytes), or nil.
     static func sizeOnDisk(appID: Int, steamApps: URL) -> Int64? {
         guard let state = record(appID: appID, steamApps: steamApps),

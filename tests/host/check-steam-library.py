@@ -795,6 +795,10 @@ func packageBuffer(apps: [UInt32], depots: [UInt32]) -> Data {
     require(info.buildID == 4242 && info.installableOnWindows && info.installDir == "Fixture Game", "build id, install folder and Windows installability")
     require(info.libraryCapsule == "cap/1.jpg" && info.parentID == nil, "artwork name; a parent equal to itself is not kept")
     require(info.depotSelectionSummary().contains("103[-]lang") && info.depotSelectionSummary().contains("107[-]dlc"), "the selection log names the rule that left a depot out")
+    require(info.installDepots(ownedDepots: [107]).map(\.depotID) == [101, 102, 105, 107], "an owned DLC depot installs with its game")
+    require(info.installDepots(ownedDepots: [999, 103]).map(\.depotID) == [101, 102, 105], "DLC is owned by depot, and ownership does not lift the other rules")
+    require(info.ownedDLCDepots([107, 101]) == [107] && info.ownedDLCDepots([]).isEmpty, "ownedDLCDepots lists owned DLC depots only")
+    require(info.depotSelectionSummary(ownedDepots: [107]).contains("107[-]sel"), "the selection log shows an owned DLC depot as selected")
     let legacy = SteamAppInfo.parse(appID: 10, from: appVDF(#"""
     "common" { "name" "Old" "type" "Game" "oslist" "windows" } "config" { "installdir" "Old" }
     "depots" { "201" { "config" { "oslist" "windows" "osarch" "32" } "manifests" { "public" "2001" } } "202" { "manifests" { "public" "2002" } } }
