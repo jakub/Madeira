@@ -1335,3 +1335,65 @@ struct SteamEntrySection: View {
         LogStore.shared.log("[steam-start] app=\(appID) launch-entries=\(options.count) programs=\(found.count) source=\(entry.steamProgramSource ?? "none")")
     }
 }
+
+/// A Steam game's Workshop collection (docs/STEAM_LIBRARY.md, "Workshop
+/// collections"): the link, what it resolves to, and the last sync. Madeira
+/// installs the collection's mods and the mods they require with the game's
+/// downloads; Update fetches changes, and mods taken out of the collection are
+/// removed.
+struct SteamWorkshopSection: View {
+    let appID: Int
+    @ObservedObject private var steam = SteamOwnedLibrary.shared
+    @State private var link = ""
+    @State private var invalid = false
+
+    private var current: String { steam.workshopCollections[appID].map(String.init) ?? "" }
+
+    var body: some View {
+        let status = steam.workshop[appID]
+        Section {
+            TextField("Collection link or number", text: $link)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .onSubmit(save)
+            if invalid {
+                Text("That is not a Steam Workshop link or item number.").font(.caption).foregroundStyle(.orange)
+            }
+            if link != current {
+                Button("Use this collection", action: save)
+            } else if !current.isEmpty {
+                Button("Check for changes") { Task { await steam.checkWorkshop(appID) } }
+                    .disabled(!steam.signedIn || status?.checking == true)
+            }
+            if let status {
+                if status.checking { LabeledContent("Reading the collection") { ProgressView() } }
+                if !status.collectionTitle.isEmpty { LabeledContent("Collection", value: status.collectionTitle) }
+                if status.items > 0 { LabeledContent("Mods", value: String(status.items)) }
+                if !status.activity.isEmpty { Text(status.activity).font(.footnote) }
+                if status.pending > 0 {
+                    Text("\(status.pending) change\(status.pending == 1 ? "" : "s") to download: use Update in the Steam section.")
+                        .font(.footnote)
+                }
+                ForEach(status.warnings, id: \.self) { Text($0).font(.caption).foregroundStyle(.orange) }
+                if let error = status.error { Text(error).font(.caption).foregroundStyle(.red) }
+                if !status.skipped.isEmpty {
+                    DisclosureGroup("\(status.skipped.count) item\(status.skipped.count == 1 ? "" : "s") left out") {
+                        ForEach(status.skipped, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary) }
+                    }
+                }
+            }
+        } header: {
+            Text("Steam Workshop")
+        } footer: {
+            Text("Paste a Workshop collection link. Madeira installs its mods, and the mods they require, into the game's mod folder and keeps them updated; mods taken out of the collection are removed. Turn them on in the game's own mod list.")
+        }
+        .onAppear { link = current }
+    }
+
+    private func save() {
+        invalid = !steam.setWorkshopCollection(appID, link: link)
+        guard !invalid else { return }
+        link = current
+        Task { await steam.checkWorkshop(appID) }
+    }
+}

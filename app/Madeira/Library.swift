@@ -2952,6 +2952,7 @@ struct LibraryDetail: View {
                 if let appID = entry.steamAppID {
                     SteamCloudSection(appID: appID)
                     SteamEntrySection(entry: $entry) { leaving = true; dismiss() }
+                    if SteamOwnedLibrary.enabled { SteamWorkshopSection(appID: appID) }
                 }
                 Section {
                     // The Windows screen the game renders for (and the Desktop's size).
