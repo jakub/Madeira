@@ -18,6 +18,11 @@ struct SteamAppInfo {
     var depots: [DepotInfo] = []
     var buildID: UInt32 = 0
     var freeToDownload = false
+    /// The depot that holds the app's Workshop content (`depots/workshopdepot`);
+    /// 0 when PICS names none, and the app's own ID is that depot.
+    var workshopDepot: UInt32 = 0
+    /// The depot Workshop item manifests belong to.
+    var workshopContentDepot: UInt32 { workshopDepot != 0 ? workshopDepot : appID }
     /// Apps owning depots this app installs through `depotfromapp`, so the
     /// install record names them the way Valve's client does.
     var sharedOwners: [UInt32: SharedOwner] = [:]
@@ -288,6 +293,9 @@ struct SteamAppInfo {
 
         // Depots section
         if let depots = appInfo["depots"] as? [String: Any] {
+            if let workshop = (depots["workshopdepot"] as? String).flatMap(UInt32.init) {
+                info.workshopDepot = workshop
+            }
             for (key, depotData) in depots {
                 guard let depotID = UInt32(key),
                       let depot = depotData as? [String: Any] else { continue }

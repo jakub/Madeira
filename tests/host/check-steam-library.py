@@ -86,7 +86,8 @@ library_swift = [
     'SwiftSteam/Core/SteamConnection.swift', 'SwiftSteam/Core/SteamMessageCodec.swift', 'SwiftSteam/Core/SteamProtocol.swift',
     'SwiftSteam/Core/SteamSession.swift', 'SwiftSteam/Content/ContentDecryptor.swift', 'SwiftSteam/Content/DepotDownloader.swift',
     'SwiftSteam/Content/DepotManifest.swift', 'SwiftSteam/Library/SteamAppInfo.swift',
-    'SwiftSteam/Library/SteamLibraryFetcher.swift', 'SwiftSteam/Install/AppManifestWriter.swift']
+    'SwiftSteam/Library/SteamLibraryFetcher.swift', 'SwiftSteam/Library/SteamWorkshop.swift',
+    'SwiftSteam/Install/AppManifestWriter.swift']
 c_files = ['SwiftSteam/chunk_zip.c', 'SwiftSteam/chunk_zip.h', 'SwiftSteam/lzma_shim.c', 'SwiftSteam/lzma_shim.h',
            'SwiftSteam/zstd_edu.c', 'SwiftSteam/zstd_edu.h']
 project = (root / 'app/Madeira.xcodeproj/project.pbxproj').read_text()
@@ -805,6 +806,38 @@ func packageBuffer(apps: [UInt32], depots: [UInt32]) -> Data {
     """#))!
     require(dlcArch.installDepots(ownedDepots: [302, 303]).map(\.depotID) == [301, 303], "an owned DLC takes its 64-bit depot")
     require(dlcArch.depotSelectionSummary(ownedDepots: [302, 303]).contains("302[32]arch") && dlcArch.depotSelectionSummary().contains("302[32]dlc"), "the log blames an owned DLC depot's architecture, an unowned one's ownership")
+
+    // ---- Workshop: GetDetails codec and the collection walk
+    func wsDetail(_ id: UInt64, result: UInt32 = 1, app: UInt32 = 294100, type: UInt32 = 0, manifest: UInt64 = 0,
+                  banned: Bool = false, children: [(UInt64, UInt32)] = []) -> Data {
+        var e = ProtobufEncoder()
+        e.writeUInt32(fieldNumber: 1, value: result); e.writeUInt64(fieldNumber: 2, value: id); e.writeUInt32(fieldNumber: 5, value: app)
+        if manifest != 0 { e.writeFixed64(fieldNumber: 14, value: manifest) }
+        e.writeString(fieldNumber: 16, value: "item \(id)")
+        if banned { e.writeBool(fieldNumber: 28, value: true) }
+        e.writeUInt32(fieldNumber: 34, value: type)
+        for (cid, order) in children {
+            var c = ProtobufEncoder(); c.writeUInt64(fieldNumber: 1, value: cid); c.writeUInt32(fieldNumber: 2, value: order)
+            e.writeSubmessage(fieldNumber: 53, value: c.data)
+        }
+        return e.data
+    }
+    func wsResponse(_ items: [Data]) -> Data { var e = ProtobufEncoder(); for i in items { e.writeSubmessage(fieldNumber: 1, value: i) }; return e.data }
+    let wsParsed = try SteamWorkshop.parseDetails(wsResponse([wsDetail(5, manifest: 0xDEADBEEF12345678, children: [(9, 2), (8, 1), (7, 1)])]))
+    require(wsParsed.count == 1 && wsParsed[0].manifestID == 0xDEADBEEF12345678 && wsParsed[0].children == [8, 7, 9], "workshop details: fixed64 manifest, children in sort order")
+    require(SteamWorkshop.itemID(from: "https://steamcommunity.com/sharedfiles/filedetails/?id=2009463077") == 2009463077 && SteamWorkshop.itemID(from: "x") == nil, "workshop item IDs from links")
+    let wsWorld: [UInt64: Data] = [
+        100: wsDetail(100, type: 2, children: [(1, 0), (200, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6)]),
+        200: wsDetail(200, type: 2, children: [(10, 0), (100, 1)]),
+        1: wsDetail(1, manifest: 11), 2: wsDetail(2, manifest: 12, children: [(20, 0), (1, 1)]),
+        20: wsDetail(20, manifest: 13, children: [(21, 0)]), 21: wsDetail(21, manifest: 14, children: [(2, 0)]),
+        3: wsDetail(3, app: 4000), 4: wsDetail(4, banned: true), 5: wsDetail(5, result: 9), 6: wsDetail(6, type: 3), 10: wsDetail(10, manifest: 16),
+    ]
+    let wsResolved = try await SteamWorkshop.resolve(collection: 100, appID: 294100) { batch in
+        try SteamWorkshop.parseDetails(wsResponse(batch.compactMap { wsWorld[$0] }))
+    }
+    require(wsResolved.mods.map(\.id) == [1, 2, 10, 20, 21] && wsResolved.requiredBy == [20: 2, 21: 20], "a collection resolves nested collections and required items once each, cycles included")
+    require(wsResolved.skipped.count == 4, "items for another game, banned, unreadable or not mods are left out with a reason")
     let legacy = SteamAppInfo.parse(appID: 10, from: appVDF(#"""
     "common" { "name" "Old" "type" "Game" "oslist" "windows" } "config" { "installdir" "Old" }
     "depots" { "201" { "config" { "oslist" "windows" "osarch" "32" } "manifests" { "public" "2001" } } "202" { "manifests" { "public" "2002" } } }
@@ -1062,6 +1095,7 @@ try:
                   steam / 'Core/SteamMessageCodec.swift', steam / 'Core/SteamCMSession.swift',
                   steam / 'Content/ContentDecryptor.swift', steam / 'Content/DepotManifest.swift',
                   steam / 'Library/SteamAppInfo.swift', steam / 'Library/SteamLibraryFetcher.swift',
+                  steam / 'Library/SteamWorkshop.swift',
                   steam / 'Install/AppManifestWriter.swift', app / 'SteamInstall.swift', app / 'SteamKeyValues.swift']
     exe = work / 'check'
     build = subprocess.run([SWIFTC, '-parse-as-library', '-swift-version', '5', '-sanitize=address', '-g', '-o', str(exe),

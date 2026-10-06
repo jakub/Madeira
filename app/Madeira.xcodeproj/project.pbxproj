@@ -40,6 +40,7 @@
 		A1000608 /* SwiftSteam/Core/SteamSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000608 /* SteamSession.swift */; };
 		A1000616 /* SwiftSteam/Core/SteamCMSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000616 /* SteamCMSession.swift */; };
 		A100060C /* SwiftSteam/Library/SteamAppInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200060C /* SteamAppInfo.swift */; };
+		A1000620 /* SwiftSteam/Library/SteamWorkshop.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000620 /* SteamWorkshop.swift */; };
 		A100060D /* SwiftSteam/Library/SteamLibraryFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200060D /* SteamLibraryFetcher.swift */; };
 		A1000522 /* SteamKeyValues.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000522 /* SteamKeyValues.swift */; };
 		A1000523 /* SteamRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000523 /* SteamRuntime.swift */; };
@@ -210,6 +211,7 @@
 		A2000608 /* SteamSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwiftSteam/Core/SteamSession.swift"; sourceTree = "<group>"; };
 		A2000616 /* SteamCMSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwiftSteam/Core/SteamCMSession.swift"; sourceTree = "<group>"; };
 		A200060C /* SteamAppInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwiftSteam/Library/SteamAppInfo.swift"; sourceTree = "<group>"; };
+		A2000620 /* SteamWorkshop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwiftSteam/Library/SteamWorkshop.swift"; sourceTree = "<group>"; };
 		A200060D /* SteamLibraryFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwiftSteam/Library/SteamLibraryFetcher.swift"; sourceTree = "<group>"; };
 		A2000522 /* SteamKeyValues.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SteamKeyValues.swift"; sourceTree = "<group>"; };
 		A2000523 /* SteamRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SteamRuntime.swift"; sourceTree = "<group>"; };
@@ -424,6 +426,7 @@
 				A2000608 /* SteamSession.swift */,
 				A2000616 /* SteamCMSession.swift */,
 				A200060C /* SteamAppInfo.swift */,
+				A2000620 /* SteamWorkshop.swift */,
 				A200060D /* SteamLibraryFetcher.swift */,
 				A2000522 /* SteamKeyValues.swift */,
 				A2000523 /* SteamRuntime.swift */,
@@ -749,6 +752,7 @@
 				A1000608 /* SwiftSteam/Core/SteamSession.swift in Sources */,
 				A1000616 /* SwiftSteam/Core/SteamCMSession.swift in Sources */,
 				A100060C /* SwiftSteam/Library/SteamAppInfo.swift in Sources */,
+				A1000620 /* SwiftSteam/Library/SteamWorkshop.swift in Sources */,
 				A100060D /* SwiftSteam/Library/SteamLibraryFetcher.swift in Sources */,
 				A1000522 /* SteamKeyValues.swift in Sources */,
 				A1000523 /* SteamRuntime.swift in Sources */,
