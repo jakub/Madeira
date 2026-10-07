@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetaData>
+  <name>QuitTest (Madeira diagnostic)</name>
+  <author>Madeira</author>
+  <packageId>local.quittest</packageId>
+  <supportedVersions><li>1.6</li></supportedVersions>
+  <modDependencies>
+    <li>
+      <packageId>brrainz.harmony</packageId>
+      <displayName>Harmony</displayName>
+      <steamWorkshopUrl>steam://url/CommunityFilePage/2009463077</steamWorkshopUrl>
+      <downloadUrl>https://github.com/pardeike/HarmonyRimWorld/releases/latest</downloadUrl>
+    </li>
+  </modDependencies>
+  <loadAfter><li>brrainz.harmony</li></loadAfter>
+  <description>Quits the game through its own shutdown path 300 main-menu frames after the menu appears, and logs [quittest] lines. For testing that a quit completes; do not leave it active.</description>
+</ModMetaData>
