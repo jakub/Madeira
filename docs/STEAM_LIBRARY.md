@@ -411,6 +411,13 @@ zlib development files; it never contacts Steam):
     scanner (`MadeiraDock.games`) finds the finished install; an update that
     fetches one changed chunk and shrinks a file; uninstall.
 
+`check-steam-connection.py` (needs `swiftc`) covers the CM connection's
+continuations: `connect()` waits for its pong through
+`SteamConnection.awaitPong`, which resumes once however often URLSession calls
+the pong handler (a repeated error, a teardown error after the pong, a late
+call, two racing calls), and `SteamSession` resumes a job on a send error only
+if `disconnect()` or the timeout has not already.
+
 `check-steam-games.py` covers the merge of installed and owned games, the
 status text, artwork candidates and the Play rules, the install size from the
 record, and the Game details wiring: an installed game opens its library entry's
