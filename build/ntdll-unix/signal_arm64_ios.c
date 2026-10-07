@@ -620,12 +620,20 @@ int ios_thread_registry_purge_range( uintptr_t base, uintptr_t size )
     for (i = 0; i < count; i++)
     {
         uintptr_t teb = ios_thread_registry[i].teb;
+        thread_t port = ios_thread_registry[i].mach_thread;
 
         if (!teb || teb < base || teb - base >= size) continue;
-        ios_thread_registry[i].mach_thread = 0;
-        __sync_synchronize();
+        /* Claim the row exactly as a reclaimer does (port -> MACH_PORT_DEAD), so
+         * a purge and a reclaim never write the same row at once; publishing 0
+         * afterwards makes it free again. */
+        if (port == MACH_PORT_DEAD ||
+            !__sync_bool_compare_and_swap( &ios_thread_registry[i].mach_thread, port, MACH_PORT_DEAD ))
+            continue;
         ios_thread_registry[i].teb = 0;
         ios_thread_registry[i].trampoline = NULL;
+        ios_thread_registry[i].tid = 0;
+        __sync_synchronize();
+        ios_thread_registry[i].mach_thread = 0;
         purged++;
     }
     return purged;
@@ -763,7 +771,8 @@ static int ios_lookup_thread(thread_t mach_thread, uintptr_t *teb_out, void **tr
  * thread.  Called from the virtual_ios.c census loop. */
 /* ml405 (task #60): the wanderer often parks PRE-chorus, where no beacon
  * exists.  Census sweep, no beacon needed: every call, walk registry entries
- * (newest-first per TEB so corpses lose), and report every thread parked in
+ * (rows are reused once the table is full, so index order is not age;
+ * liveness is checked per row), and report every thread parked in
  * the ml404 __ulock_wait signature (WAITING + x0==0x1000001) — lock address
  * (x1), lock word (owner name for os_unfair_lock), and an 8-frame fp walk.
  * Each thread reported once (dedupe by port), 60 reports max. */
@@ -791,6 +800,7 @@ static void ios_lock_census(void)
         {
             thread_t cand = ios_thread_registry[i].mach_thread;
             uintptr_t cteb = (uintptr_t)ios_thread_registry[i].teb;
+            uint32_t row_tid = ios_thread_registry[i].tid;
             uint64_t held = 0;
             unsigned int ctid = 0;
             mach_vm_size_t mgot = 0;
@@ -801,7 +811,7 @@ static void ios_lock_census(void)
             uint64_t fp, frames[8] = { 0 };
             int fi;
             uint64_t srw_held = 0;
-            if (!cand || !cteb) continue;
+            if (!cand || !cteb || cand == MACH_PORT_DEAD) continue;   /* DEAD: being claimed */
             if (mach_vm_read_overwrite( mach_task_self(), (mach_vm_address_t)(cteb + 0x16f8), 8,
                                         (mach_vm_address_t)&held, &mgot ) != KERN_SUCCESS
                 || mgot != 8)
@@ -851,13 +861,13 @@ static void ios_lock_census(void)
                     /* The TEB now belongs to another thread (its ClientId changed),
                      * whether or not that thread made it into the registry: the
                      * stamp is the live owner's, so do not touch it. */
-                    if (ios_thread_registry[i].tid && ctid != ios_thread_registry[i].tid)
+                    if (row_tid && ctid != row_tid)
                     {
                         static unsigned int n_skip_tid;
                         if (!already && n_skip_tid++ < 16)
                             dprintf(2, "[lock-reap] dead port=0x%x teb=0x%llx row tid=%04x now tid=%04x "
                                     "SKIPPED (teb recycled) rev=ml445\n", cand, (unsigned long long)cteb,
-                                    ios_thread_registry[i].tid, ctid);
+                                    row_tid, ctid);
                         live = 1;
                     }
                     for (r = 0; r < count && !live; r++)
@@ -870,6 +880,12 @@ static void ios_lock_census(void)
                                          (thread_info_t)&lbi, &lcnt ) == KERN_SUCCESS)
                             live = 1;
                     }
+                    /* The row must still be the one snapshotted: dead names are never
+                     * recycled (ml401), so the same port proves no reclaim slipped in
+                     * between the snapshot and here. */
+                    if (ios_thread_registry[i].mach_thread != cand ||
+                        (uintptr_t)ios_thread_registry[i].teb != cteb)
+                        live = 1;
                     if (!already && !live && reaped_n < 16)
                     {
                         extern void ios_wpm_reap_shared( unsigned long long mutex_addr, unsigned int depth,
@@ -890,6 +906,16 @@ static void ios_lock_census(void)
                                 (unsigned long long)srw_stamp);
                         ios_wpm_reap_shared( held, depth, (unsigned long long)cteb );
                         if (srw_stamp) ios_srw_reap_exclusive( srw_stamp, (unsigned long long)cteb );
+                        /* The reap only fixes the mutex words: clear the dead
+                         * thread's stamps too, or the row stays pinned against
+                         * reclaim for good. */
+                        {
+                            uint64_t zero = 0;
+                            mach_vm_write( mach_task_self(), (mach_vm_address_t)(cteb + 0x16f8),
+                                           (vm_offset_t)&zero, 8 );
+                            mach_vm_write( mach_task_self(), (mach_vm_address_t)(cteb + 0x16e8),
+                                           (vm_offset_t)&zero, 8 );
+                        }
                     }
                     else if (!already && live)
                         dprintf(2, "[lock-reap] dead port=0x%x teb=0x%llx stamp=0x%llx SKIPPED (teb recycled to live thread) rev=ml445\n",
@@ -1111,10 +1137,11 @@ void ios_pump_sample(void)
         }
         if (!nbeacons) return;
     }
-    /* resolve each beacon TEB to the NEWEST registry entry with a LIVE port.
+    /* resolve each beacon TEB to a registry entry with a LIVE port.
      * ml402: TEB VAs recycle; forward first-match picked DEAD threads' stale
-     * entries (dead names -> MACH_SEND_INVALID_DEST forever).  Scan backwards
-     * and validate with thread_info before accepting; a beacon whose port
+     * entries (dead names -> MACH_SEND_INVALID_DEST forever).  Rows are reused
+     * once the table is full, so index order is not age: the thread_info
+     * validation below is what picks the live entry, not the scan direction; a beacon whose port
      * dies gets re-resolved next cycle, and "no live entry" is itself the
      * thread-death verdict. */
     for (b = 0; b < nbeacons; b++)
@@ -6275,6 +6302,11 @@ static void ios_setup_mach_exception_handler( thread_t pe_thread, uintptr_t teb,
     if (idx == reg_count)
     {
         idx = __sync_fetch_and_add(&ios_thread_count, 1);
+        /* A fresh row reads as free (all zero) until it is published, so claim
+         * it the way reclaim does; if a reclaimer got it first, reclaim another. */
+        if (idx < IOS_MAX_WINE_THREADS &&
+            !__sync_bool_compare_and_swap( &ios_thread_registry[idx].mach_thread, 0, MACH_PORT_DEAD ))
+            idx = IOS_MAX_WINE_THREADS;
         if (idx >= IOS_MAX_WINE_THREADS)
         {
             /* Rows were never freed when a thread exited, so a game that churns
