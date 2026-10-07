@@ -3649,18 +3649,25 @@ void process_exit_wrapper( int status )
     {
         /* No slot: this is the session's initial process, the program the app
          * itself handed to __wine_main (WineProcessBridge.m). Its exit status
-         * is how the app's library tells a crash from a normal quit. A weak
-         * hook with one integer argument: no names, no allocation, no logging;
-         * helpers and anything the program starts have a slot and never call it. */
+         * is how the app's library tells a crash from a normal quit, and this
+         * call is also where the session ends when the thread ending the
+         * process is not the one __wine_main runs on (its exit() below only
+         * ends this thread). A weak hook with one integer argument, called
+         * after the master socket is closed so the server has seen the process
+         * die; helpers and anything the program starts have a slot and never
+         * call it. */
         extern void wine_launched_process_did_exit( int status ) __attribute__((weak));
-        if (wine_launched_process_did_exit) wine_launched_process_did_exit( status );
         close( fd_socket );
+        if (wine_launched_process_did_exit) wine_launched_process_did_exit( status );
     }
 #else
     close( fd_socket );
 #endif
     wine_log_write("[Wine ntdll/server] process_exit_wrapper(%d)", status );
-    exit( status );  /* on iOS, wine_ios_exit shim longjmps back to wine_process_thread */
+    /* on iOS the wine_ios_exit shim longjmps back to the pseudo-process's first
+     * thread (wine_process_thread, ios_child_thread_entry) when called on it,
+     * and is pthread_exit on any other thread */
+    exit( status );
 }
 
 
