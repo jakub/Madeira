@@ -1,0 +1,23 @@
+# Git-ignored inputs that Claude Code copies from the main checkout into each new
+# worktree, so the app target builds there without re-running the native build
+# chains (docs/BUILDING.md). They are whatever the main checkout last built: when
+# a worktree's branch pins different wine, dxmt or FEX commits, rebuild those
+# inputs in the worktree before trusting a game run.
+
+# Per-machine settings: signing, FEX_ROOT (app/Madeira.xcconfig)
+app/Local.xcconfig
+
+# Native build outputs the app target links or bundles
+app/Madeira/libntdll_unix.a
+app/Madeira/libwineserver.a
+app/Madeira/libwin32u_unix.a
+app/Madeira/libdxmt_combined.a
+app/Madeira/libmadeira_rppairing.a
+app/Madeira/libavformat.a
+app/Madeira/libavcodec.a
+app/Madeira/libswresample.a
+app/Madeira/libavutil.a
+app/Madeira/arm64ec-windows/dockhost.exe
+app/Madeira/arm64ec-windows/dock-notices.txt
+app/Madeira/licenses/LICENSE-MADEIRA-*.txt
+app/Madeira/x86_64-vcruntime/*.dll

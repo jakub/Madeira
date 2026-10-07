@@ -250,8 +250,8 @@ extensions). If an installer drops it, Madeira says the helper is missing;
 select StikDebug instead.
 
 To build Madeira under another bundle identifier, set the
-`MADEIRA_BUNDLE_IDENTIFIER` build setting (for example in an `.xcconfig`
-passed with `-xcconfig`). The app and the helper (`<id>.JITHelper`) follow it.
+`MADEIRA_BUNDLE_IDENTIFIER` build setting in `app/Local.xcconfig` (see
+`app/Madeira.xcconfig`). The app and the helper (`<id>.JITHelper`) follow it.
 
 JIT also requires Madeira's executable to be signed as debuggable. Madeira
 reports a signing error before attempting either method when that entitlement

@@ -241,14 +241,14 @@
 		A200000A /* EntitlementChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EntitlementChecker.swift; sourceTree = "<group>"; };
 		A200000B /* FEXBridge.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = FEXBridge.mm; sourceTree = "<group>"; };
 		A200000C /* FEXBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = FEXBridge.h; sourceTree = "<group>"; };
-		A2000010 /* libFEXCore.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libFEXCore.a; path = "../../FEX/build-ios/FEXCore/Source/libFEXCore.a"; sourceTree = "<group>"; };
-		A2000011 /* libFEXCore_Base.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libFEXCore_Base.a; path = "../../FEX/build-ios/FEXCore/Source/libFEXCore_Base.a"; sourceTree = "<group>"; };
-		A2000012 /* libfmt.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libfmt.a; path = "../../FEX/build-ios/External/fmt/libfmt.a"; sourceTree = "<group>"; };
-		A2000013 /* libcephes_128bit.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libcephes_128bit.a; path = "../../FEX/build-ios/External/cephes/libcephes_128bit.a"; sourceTree = "<group>"; };
-		A2000014 /* libxxhash.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libxxhash.a; path = "../../FEX/build-ios/External/xxhash/cmake_unofficial/libxxhash.a"; sourceTree = "<group>"; };
-		A2000015 /* libsoftfloat_3e.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libsoftfloat_3e.a; path = "../../FEX/build-ios/External/SoftFloat-3e/libsoftfloat_3e.a"; sourceTree = "<group>"; };
+		A2000010 /* libFEXCore.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libFEXCore.a; path = "build-ios/FEXCore/Source/libFEXCore.a"; sourceTree = FEX_ROOT; };
+		A2000011 /* libFEXCore_Base.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libFEXCore_Base.a; path = "build-ios/FEXCore/Source/libFEXCore_Base.a"; sourceTree = FEX_ROOT; };
+		A2000012 /* libfmt.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libfmt.a; path = "build-ios/External/fmt/libfmt.a"; sourceTree = FEX_ROOT; };
+		A2000013 /* libcephes_128bit.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libcephes_128bit.a; path = "build-ios/External/cephes/libcephes_128bit.a"; sourceTree = FEX_ROOT; };
+		A2000014 /* libxxhash.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libxxhash.a; path = "build-ios/External/xxhash/cmake_unofficial/libxxhash.a"; sourceTree = FEX_ROOT; };
+		A2000015 /* libsoftfloat_3e.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libsoftfloat_3e.a; path = "build-ios/External/SoftFloat-3e/libsoftfloat_3e.a"; sourceTree = FEX_ROOT; };
 		A2000016 /* libc++.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = "libc++.tbd"; path = "usr/lib/libc++.tbd"; sourceTree = SDKROOT; };
-		A2000017 /* libJemallocLibs.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libJemallocLibs.a; path = "../../FEX/build-ios/FEXCore/Source/libJemallocLibs.a"; sourceTree = "<group>"; };
+		A2000017 /* libJemallocLibs.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libJemallocLibs.a; path = "build-ios/FEXCore/Source/libJemallocLibs.a"; sourceTree = FEX_ROOT; };
 		A200001E /* WineServerBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = WineServerBridge.m; sourceTree = "<group>"; };
 		A200001F /* WineServerBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = WineServerBridge.h; sourceTree = "<group>"; };
 		A2000020 /* libwineserver.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libwineserver.a; sourceTree = "<group>"; };
@@ -324,6 +324,7 @@
 		A2000281 /* Winios/WiniosCursor.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "Winios/WiniosCursor.c"; sourceTree = "<group>"; };
 		A2000245 /* TouchGamepad.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TouchGamepad.swift; sourceTree = "<group>"; };
 		A2000246 /* TouchControlPresets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TouchControlPresets.swift; sourceTree = "<group>"; };
+		A9000001 /* Madeira.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Madeira.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -386,6 +387,7 @@
 				B4000001 /* MadeiraJITHelper */,
 				A4000004 /* Libraries */,
 				A4000003 /* Products */,
+				A9000001 /* Madeira.xcconfig */,
 			);
 			sourceTree = "<group>";
 		};
@@ -828,6 +830,7 @@
 /* Begin XCBuildConfiguration section */
 		A8000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A9000001 /* Madeira.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -851,7 +854,6 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MADEIRA_BUNDLE_IDENTIFIER = com.willfaust.madeora;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -863,6 +865,7 @@
 		};
 		A8000002 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A9000001 /* Madeira.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -880,7 +883,6 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MADEIRA_BUNDLE_IDENTIFIER = com.willfaust.madeora;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
@@ -897,20 +899,19 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 4;
-				DEVELOPMENT_TEAM = V8NU3FX3TL;
 				GENERATE_INFOPLIST_FILE = NO;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
-					"$(SRCROOT)/../FEX/FEXCore/include",
-					"$(SRCROOT)/../FEX/FEXHeaderUtils",
-					"$(SRCROOT)/../FEX/CodeEmitter",
-					"$(SRCROOT)/../FEX/External/fmt/include",
-					"$(SRCROOT)/../FEX/External/range-v3/include",
-					"$(SRCROOT)/../FEX/External/unordered_dense/include",
-					"$(SRCROOT)/../FEX/build-ios",
-					"$(SRCROOT)/../FEX/build-ios/include",
-					"$(SRCROOT)/../FEX/build-ios/FEXCore/Source",
-					"$(SRCROOT)/../FEX",
+					"$(FEX_ROOT)/FEXCore/include",
+					"$(FEX_ROOT)/FEXHeaderUtils",
+					"$(FEX_ROOT)/CodeEmitter",
+					"$(FEX_ROOT)/External/fmt/include",
+					"$(FEX_ROOT)/External/range-v3/include",
+					"$(FEX_ROOT)/External/unordered_dense/include",
+					"$(FEX_ROOT)/build-ios",
+					"$(FEX_ROOT)/build-ios/include",
+					"$(FEX_ROOT)/build-ios/FEXCore/Source",
+					"$(FEX_ROOT)",
 				);
 				INFOPLIST_FILE = Madeira/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -921,11 +922,11 @@
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
-					"$(SRCROOT)/../FEX/build-ios/FEXCore/Source",
-					"$(SRCROOT)/../FEX/build-ios/External/fmt",
-					"$(SRCROOT)/../FEX/build-ios/External/cephes",
-					"$(SRCROOT)/../FEX/build-ios/External/xxhash/cmake_unofficial",
-					"$(SRCROOT)/../FEX/build-ios/External/SoftFloat-3e",
+					"$(FEX_ROOT)/build-ios/FEXCore/Source",
+					"$(FEX_ROOT)/build-ios/External/fmt",
+					"$(FEX_ROOT)/build-ios/External/cephes",
+					"$(FEX_ROOT)/build-ios/External/xxhash/cmake_unofficial",
+					"$(FEX_ROOT)/build-ios/External/SoftFloat-3e",
 					"$(SRCROOT)/Madeira",
 				);
 				MARKETING_VERSION = 0.1.3;
@@ -948,20 +949,19 @@
 				CODE_SIGN_ENTITLEMENTS = Madeira/Madeira.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 4;
-				DEVELOPMENT_TEAM = V8NU3FX3TL;
 				GENERATE_INFOPLIST_FILE = NO;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
-					"$(SRCROOT)/../FEX/FEXCore/include",
-					"$(SRCROOT)/../FEX/FEXHeaderUtils",
-					"$(SRCROOT)/../FEX/CodeEmitter",
-					"$(SRCROOT)/../FEX/External/fmt/include",
-					"$(SRCROOT)/../FEX/External/range-v3/include",
-					"$(SRCROOT)/../FEX/External/unordered_dense/include",
-					"$(SRCROOT)/../FEX/build-ios",
-					"$(SRCROOT)/../FEX/build-ios/include",
-					"$(SRCROOT)/../FEX/build-ios/FEXCore/Source",
-					"$(SRCROOT)/../FEX",
+					"$(FEX_ROOT)/FEXCore/include",
+					"$(FEX_ROOT)/FEXHeaderUtils",
+					"$(FEX_ROOT)/CodeEmitter",
+					"$(FEX_ROOT)/External/fmt/include",
+					"$(FEX_ROOT)/External/range-v3/include",
+					"$(FEX_ROOT)/External/unordered_dense/include",
+					"$(FEX_ROOT)/build-ios",
+					"$(FEX_ROOT)/build-ios/include",
+					"$(FEX_ROOT)/build-ios/FEXCore/Source",
+					"$(FEX_ROOT)",
 				);
 				INFOPLIST_FILE = Madeira/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -972,11 +972,11 @@
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
-					"$(SRCROOT)/../FEX/build-ios/FEXCore/Source",
-					"$(SRCROOT)/../FEX/build-ios/External/fmt",
-					"$(SRCROOT)/../FEX/build-ios/External/cephes",
-					"$(SRCROOT)/../FEX/build-ios/External/xxhash/cmake_unofficial",
-					"$(SRCROOT)/../FEX/build-ios/External/SoftFloat-3e",
+					"$(FEX_ROOT)/build-ios/FEXCore/Source",
+					"$(FEX_ROOT)/build-ios/External/fmt",
+					"$(FEX_ROOT)/build-ios/External/cephes",
+					"$(FEX_ROOT)/build-ios/External/xxhash/cmake_unofficial",
+					"$(FEX_ROOT)/build-ios/External/SoftFloat-3e",
 					"$(SRCROOT)/Madeira",
 				);
 				MARKETING_VERSION = 0.1.3;
@@ -998,7 +998,6 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 4;
-				DEVELOPMENT_TEAM = V8NU3FX3TL;
 				"FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/Frameworks/StikJIT.xcframework/ios-arm64";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MadeiraJITHelper/Info.plist;
@@ -1029,7 +1028,6 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 4;
-				DEVELOPMENT_TEAM = V8NU3FX3TL;
 				"FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/Frameworks/StikJIT.xcframework/ios-arm64";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MadeiraJITHelper/Info.plist;

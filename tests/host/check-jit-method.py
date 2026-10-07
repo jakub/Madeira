@@ -137,9 +137,11 @@ project = (root / "app/Madeira.xcodeproj/project.pbxproj").read_text()
 helper_source = (root / "app/MadeiraJITHelper/MadeiraJITHelper.swift").read_text()
 require(project.count('PRODUCT_BUNDLE_IDENTIFIER = "$(MADEIRA_BUNDLE_IDENTIFIER)";') == 2
         and project.count('PRODUCT_BUNDLE_IDENTIFIER = "$(MADEIRA_BUNDLE_IDENTIFIER).JITHelper";') == 2
-        and project.count("MADEIRA_BUNDLE_IDENTIFIER = com.willfaust.madeora;") == 2
+        and "MADEIRA_BUNDLE_IDENTIFIER = " not in project
+        and project.count("baseConfigurationReference = A9000001 /* Madeira.xcconfig */;") == 2
+        and "\nMADEIRA_BUNDLE_IDENTIFIER = com.willfaust.madeora\n" in (root / "app/Madeira.xcconfig").read_text()
         and "AppExtensionPoint" not in helper_source,
-        "one setting, MADEIRA_BUNDLE_IDENTIFIER, names the app and the helper")
+        "one setting, MADEIRA_BUNDLE_IDENTIFIER (app/Madeira.xcconfig), names the app and the helper")
 
 problem = setup[setup.index("enum ConnectionProblem"):setup.index("var message: String")]
 require(problem.index('"connectionreset"') < problem.index("self = .pairing") < problem.index('"connectionrefused"')

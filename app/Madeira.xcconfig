@@ -1,0 +1,14 @@
+// Project-wide settings that differ between machines. The values here are the
+// upstream defaults; override any of them in app/Local.xcconfig (git-ignored,
+// copied into new Claude Code worktrees by .worktreeinclude).
+
+// Signing. The JIT helper's identifier follows as $(MADEIRA_BUNDLE_IDENTIFIER).JITHelper.
+DEVELOPMENT_TEAM = V8NU3FX3TL
+MADEIRA_BUNDLE_IDENTIFIER = com.willfaust.madeora
+
+// FEX headers and the build-ios archives (build/fex-ios/build.sh). A worktree
+// whose FEX submodule is not checked out and built can point this at another
+// checkout's FEX, at the cost of building against that checkout's FEX commit.
+FEX_ROOT = $(SRCROOT)/../FEX
+
+#include? "Local.xcconfig"
