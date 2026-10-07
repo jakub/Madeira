@@ -546,6 +546,7 @@ struct ios_thread_entry {
     thread_t mach_thread;
     uintptr_t teb;
     void *trampoline;
+    uint32_t tid;   /* TEB ClientId.UniqueThread at registration: whose TEB this row describes */
 };
 static struct ios_thread_entry ios_thread_registry[IOS_MAX_WINE_THREADS];
 static volatile int32_t ios_thread_count = 0;
@@ -651,6 +652,64 @@ int ios_thread_registry_range_busy( uintptr_t base, uintptr_t size )
         if (kr != KERN_INVALID_ARGUMENT && kr != MACH_SEND_INVALID_DEST && kr != KERN_TERMINATED) return 1;
     }
     return 0;
+}
+
+/* A row's thread is gone: its port (pinned by ml401) is a dead name. */
+static int ios_thread_port_dead( thread_t port )
+{
+    struct thread_basic_info info;
+    mach_msg_type_number_t length = THREAD_BASIC_INFO_COUNT;
+    kern_return_t kr = thread_info( port, THREAD_BASIC_INFO, (thread_info_t)&info, &length );
+
+    return kr == KERN_INVALID_ARGUMENT || kr == MACH_SEND_INVALID_DEST || kr == KERN_TERMINATED;
+}
+
+/* Does a dead row's TEB still carry that dead thread's own lock stamp (the FEX
+ * shared lock at TEB+0x16f8, CodeBufferWriteMutex at TEB+0x16e8)?  Then the
+ * census reaper (ml445/446) still needs the row.  A TEB that now belongs to
+ * another thread (different ClientId) no longer speaks for the dead one. */
+static int ios_dead_row_holds_lock( const struct ios_thread_entry *e )
+{
+    uint64_t held = 0, srw = 0;
+    uint32_t now_tid = 0;
+    mach_vm_size_t got = 0;
+
+    if (!e->teb) return 0;
+    if (mach_vm_read_overwrite( mach_task_self(), (mach_vm_address_t)(e->teb + 0x48), 4,
+                                (mach_vm_address_t)&now_tid, &got ) != KERN_SUCCESS || got != 4)
+        return 0;   /* TEB gone: nothing left to reap */
+    if (e->tid && now_tid != e->tid) return 0;
+    mach_vm_read_overwrite( mach_task_self(), (mach_vm_address_t)(e->teb + 0x16f8), 8,
+                            (mach_vm_address_t)&held, &got );
+    mach_vm_read_overwrite( mach_task_self(), (mach_vm_address_t)(e->teb + 0x16e8), 8,
+                            (mach_vm_address_t)&srw, &got );
+    return held || srw;
+}
+
+/* Take back a row whose thread is gone, for a new thread once the table is
+ * full.  The claim swaps the port to MACH_PORT_DEAD, which no live thread has,
+ * so two registrants cannot take the same row, and lookups by port never match
+ * it while the new owner fills it in. */
+static int ios_thread_registry_reclaim(void)
+{
+    int i;
+
+    for (i = 0; i < IOS_MAX_WINE_THREADS; i++)
+    {
+        struct ios_thread_entry *e = &ios_thread_registry[i];
+        thread_t old = e->mach_thread;
+
+        if (old == MACH_PORT_DEAD) continue;   /* being claimed */
+        if (old && !ios_thread_port_dead( old )) continue;
+        if (old && ios_dead_row_holds_lock( e )) continue;
+        if (!__sync_bool_compare_and_swap( &e->mach_thread, old, MACH_PORT_DEAD )) continue;
+        e->teb = 0;
+        e->trampoline = NULL;
+        e->tid = 0;
+        __sync_synchronize();
+        return i;
+    }
+    return -1;
 }
 
 static int ios_lookup_thread(thread_t mach_thread, uintptr_t *teb_out, void **tramp_out)
@@ -789,6 +848,18 @@ static void ios_lock_census(void)
                     static int reaped_n;
                     int r, live = 0, already = 0;
                     for (r = 0; r < reaped_n; r++) if (reaped_tebs[r] == (uint64_t)cteb) already = 1;
+                    /* The TEB now belongs to another thread (its ClientId changed),
+                     * whether or not that thread made it into the registry: the
+                     * stamp is the live owner's, so do not touch it. */
+                    if (ios_thread_registry[i].tid && ctid != ios_thread_registry[i].tid)
+                    {
+                        static unsigned int n_skip_tid;
+                        if (!already && n_skip_tid++ < 16)
+                            dprintf(2, "[lock-reap] dead port=0x%x teb=0x%llx row tid=%04x now tid=%04x "
+                                    "SKIPPED (teb recycled) rev=ml445\n", cand, (unsigned long long)cteb,
+                                    ios_thread_registry[i].tid, ctid);
+                        live = 1;
+                    }
                     for (r = 0; r < count && !live; r++)
                     {
                         struct thread_basic_info lbi;
@@ -6206,10 +6277,24 @@ static void ios_setup_mach_exception_handler( thread_t pe_thread, uintptr_t teb,
         idx = __sync_fetch_and_add(&ios_thread_count, 1);
         if (idx >= IOS_MAX_WINE_THREADS)
         {
-            ERR("[thread-registry] FULL (%d slots) — thread 0x%x teb=%p NOT registered; "
-                "Mach events on it will resolve to the slot-0 TEB (wrong process!)\n",
-                IOS_MAX_WINE_THREADS, pe_thread, (void *)teb);
-            idx = -1;
+            /* Rows were never freed when a thread exited, so a game that churns
+             * threads (RimWorld's def loader: ~1000 with a 475-mod list) filled
+             * the table.  Every later thread then resolved to the slot-0 TEB and
+             * was invisible to the reaper's recycling guard, which released a
+             * live thread's FEX lock and wedged every thread on it.  Take back a
+             * row whose thread is gone instead. */
+            idx = ios_thread_registry_reclaim();
+            if (idx < 0)
+                ERR("[thread-registry] FULL (%d slots, none reclaimable) — thread 0x%x teb=%p NOT registered; "
+                    "Mach events on it will resolve to the slot-0 TEB (wrong process!)\n",
+                    IOS_MAX_WINE_THREADS, pe_thread, (void *)teb);
+            else
+            {
+                static unsigned int n_reclaim;
+                if (++n_reclaim <= 8 || n_reclaim % 256 == 0)
+                    ERR("[thread-registry] reclaimed #%u idx=%d for port=0x%x teb=%p\n",
+                        n_reclaim, idx, pe_thread, (void *)teb);
+            }
         }
     }
     if (idx >= 0)
@@ -6226,6 +6311,7 @@ static void ios_setup_mach_exception_handler( thread_t pe_thread, uintptr_t teb,
                  idx, pe_thread, (void *)ios_thread_registry[idx].teb, (void *)teb );
         ios_thread_registry[idx].teb = teb;
         ios_thread_registry[idx].trampoline = trampoline;
+        ios_thread_registry[idx].tid = *(volatile uint32_t *)(teb + 0x48);
         __sync_synchronize();
         ios_thread_registry[idx].mach_thread = pe_thread;
         /* ml401 (tasks #60/#66): EVERY registry port name proved
