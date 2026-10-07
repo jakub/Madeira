@@ -42,6 +42,21 @@ private final class SteamWebSocketDelegate: NSObject, URLSessionWebSocketDelegat
     }
 }
 
+/// Single-resume guard for the connect() ping continuation. URLSession can call
+/// a pong handler more than once (a failure delivered again when the task is
+/// cancelled or torn down); CheckedContinuation traps on a second resume, which
+/// took the whole app down on a relaunch. Exactly one resume wins.
+private final class PongResumeGuard: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func claim() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if done { return false }
+        done = true
+        return true
+    }
+}
+
 // MARK: - SteamConnection
 
 /// WebSocket transport to a Steam CM server (wss://).
@@ -85,8 +100,24 @@ actor SteamConnection {
         task.resume()
 
         // Verify the connection completed (WebSocket handshake + ping round-trip)
+        try await Self.awaitPong { task.sendPing(pongReceiveHandler: $0) }
+
+        await serverList.markSuccess(endpoint: server.endpoint)
+        scheduleReceive(task)
+        SteamLog.trace("WebSocket connected — ready for protocol messages")
+    }
+
+    /// Hand `sendPing` a pong handler and wait for its first call: nil is
+    /// connected, an error throws `connectionFailed`. Later calls are traced
+    /// and dropped (see PongResumeGuard).
+    static func awaitPong(_ sendPing: (@escaping @Sendable (Error?) -> Void) -> Void) async throws {
+        let resumeOnce = PongResumeGuard()
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            task.sendPing { error in
+            sendPing { error in
+                guard resumeOnce.claim() else {
+                    SteamLog.trace("WS pong handler called again (\(error?.localizedDescription ?? "no error")): ignored")
+                    return
+                }
                 if let error {
                     cont.resume(throwing: SteamError.connectionFailed(error.localizedDescription))
                 } else {
@@ -94,10 +125,6 @@ actor SteamConnection {
                 }
             }
         }
-
-        await serverList.markSuccess(endpoint: server.endpoint)
-        scheduleReceive(task)
-        SteamLog.trace("WebSocket connected — ready for protocol messages")
     }
 
     // MARK: - Receive
