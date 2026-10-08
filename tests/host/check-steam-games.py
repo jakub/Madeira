@@ -204,6 +204,16 @@ enum SteamRuntimeFiles {
     static let windowsRoot = "C:\\Program Files (x86)\\Steam"
 }
 '''
+# SteamInstall's uninstall reads the Workshop record: the real record type, and a
+# WorkshopInstall that matches nothing (check-steam-library.py builds the real one,
+# which needs the whole SwiftSteam stack). No check here installs Workshop items.
+workshop = (app / 'SwiftSteam/Install/WorkshopInstall.swift').read_text()
+stubs += workshop[workshop.index('struct WorkshopRecord:'):workshop.index('enum WorkshopInstall {')] + r'''
+enum WorkshopInstall {
+    static func folder(itemID: UInt64, appID: UInt32, installFolder: String) -> String { "" }
+    static func isExpected(_ entry: WorkshopRecord.Entry, itemID: String, appID: UInt32, installFolder: String) -> Bool { false }
+}
+'''
 owned_game = owned_source[owned_source.index('struct SteamOwnedGame:'):owned_source.index('// MARK: - Playtime')]
 vdf = fetcher[fetcher.index('// MARK: - Simple VDF Binary Parser'):]
 checks = r'''
