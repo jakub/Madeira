@@ -172,7 +172,8 @@ enum ResolutionChoices {
         let choices: [Choice]
     }
 
-    /// The screen in landscape: `points` give its shape, `pixels` its native size.
+    /// The screen in landscape: `points` give its shape, `pixels` the size of
+    /// the framebuffer this app draws into.
     struct Screen {
         var points: CGSize
         var pixels: CGSize
@@ -182,7 +183,13 @@ enum ResolutionChoices {
     /// library entries (whose default comes from it) are also made off it.
     static var screen: Screen = {
         #if canImport(UIKit)
-        let b = UIScreen.main.bounds, n = UIScreen.main.nativeBounds
+        // Points times scale, not nativeBounds: with the More Space display zoom
+        // iPadOS draws a 2816x1940 framebuffer and scales it down to the
+        // 2420x1668 panel of an 11-inch iPad Pro, so a "native" choice sized
+        // from nativeBounds would be scaled up to the framebuffer and back
+        // down. At the default zoom the two are the same.
+        let b = UIScreen.main.bounds, scale = UIScreen.main.scale
+        let n = CGSize(width: (b.width * scale).rounded(), height: (b.height * scale).rounded())
         return Screen(points: CGSize(width: max(b.width, b.height), height: min(b.width, b.height)),
                       pixels: CGSize(width: max(n.width, n.height), height: min(n.width, n.height)))
         #else
